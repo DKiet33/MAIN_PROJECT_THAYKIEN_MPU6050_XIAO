@@ -1,4 +1,4 @@
-# Dự Án Hệ Thống Nhận Diện Và Cảnh Báo (MAIN_PROJECT_THAYKIEN)
+# Dự Án Hệ Thống Nhận Diện Và Cảnh Báo 
 
 Đây là kho lưu trữ mã nguồn chính cho dự án hệ thống cảnh báo và điều khiển tự động.
 
