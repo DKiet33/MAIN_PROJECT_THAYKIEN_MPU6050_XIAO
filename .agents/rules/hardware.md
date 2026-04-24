@@ -35,3 +35,15 @@ Store the current pin map, attached modules, and board constraints for the ESP32
 - Prefer ADC1 pins for analog sensors when WiFi is active.
 - Confirm boot-strapping and USB-safe pins before assigning extra relays, buttons, or displays.
 - Revisit this file whenever new modules are added.
+
+## Component Links
+
+### 1. Khối nhận dữ liệu và cảm biến (Sử dụng ESP32-S3)
+- [Module WiFi Bluetooth WROOM-1 N16R8 ESP32-S3 DevKitC-1](https://icdayroi.com/module-wifi-bluetooth-wroom-1-n16r8-esp32-s3-devkitc-1)
+- [Cảm biến chất lượng nhiệt độ và độ ẩm không khí ENS160+AHT21 eCO2 TVOC](https://icdayroi.com/cam-bien-chat-luong-nhiet-do-va-do-am-khong-khi-ens160-aht21-eco2-tvoc)
+- [Cảm biến nhiệt độ CJMCU-75 LM75 hỗ trợ I2C](https://icdayroi.com/cam-bien-nhiet-do-cjmcu-75-lm75-ho-tro-i2c)
+- [Cảm biến khí gas MQ-2](https://icdayroi.com/cam-bien-khi-gas-mq-2)
+
+### 2. Thiết bị đeo tay (Sử dụng XIAO ESP32S3 + MPU6050)
+- [XIAO ESP32S3 Getting Started](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/)
+- Cảm biến gia tốc MPU6050
