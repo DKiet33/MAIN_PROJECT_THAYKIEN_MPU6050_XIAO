@@ -1,14 +1,41 @@
-# Dự Án Hệ Thống Nhận Diện Và Cảnh Báo 
+# Du An He Thong Nhan Dien Va Canh Bao
 
-Đây là kho lưu trữ mã nguồn chính cho dự án hệ thống cảnh báo và điều khiển tự động.
+He thong canh bao da chuc nang chay tren ESP32-S3 N16R8, tich hop cam bien chat luong khong khi, nhiet do, va nhan dien nga bang AI.
 
-## Trạng Thái Hiện Tại
-Dự án đã hoàn thiện bộ khung cơ bản, thiết lập được cấu trúc mã nguồn, định tuyến luồng hoạt động (flowchart) và các chương trình nền tảng.
+## Trang Thai Hien Tai (2026-05-15)
 
-## Kế Hoạch Tiếp Theo (Sắp Tới)
-Dự án đang chuẩn bị bước sang giai đoạn tích hợp thêm các thiết bị phần cứng để mở rộng tính năng:
-- **Tích hợp Servo và Quạt (Fan)**: Thêm các cơ cấu chấp hành để phục vụ cho các hoạt động điều khiển cơ học và điều hòa/tản nhiệt.
-- **Tích hợp XIAO ESP + MPU6050**: Triển khai tính năng **Nhận diện ngã (Fall Detection)**. Cảm biến MPU6050 (gia tốc kế và con quay hồi chuyển) sẽ kết hợp với vi điều khiển XIAO ESP để phát hiện các chuyển động bất thường, nghiêng đổ đột ngột và tự động gửi thông tin để xử lý cảnh báo ngã.
+### Da Hoan Thanh
+- **Firmware goc** (`src/main/main.ino`): Baseline day du — ENS160, AHT21, LM75, MQ2, Buzzer, LED, Telegram Bot. File nay duoc giu nguyen lam tham chieu.
+- **Firmware FreeRTOS** (`src/main/Rtos_main.ino`): Phien ban dang phat trien chinh thuc voi 4 FreeRTOS tasks:
+  - `TaskSensorRead` (Core1/Pri3): Doc ENS160, AHT21, LM75 moi 1 giay
+  - `TaskAlertManager` (Core1/Pri4): Tinh muc canh bao (NONE/WARNING/DANGER/CRITICAL)
+  - `TaskBuzzerLED` (Core1/Pri5): Dieu khien buzzer + LED theo pattern muc canh bao
+  - `TaskActuator` (Core0/Pri3): Dieu khien Servo SG90 va Quat 12V (NPN 2N2222)
+- **Pin Map day du**: ENS160/AHT21/LM75 qua I2C, Buzzer GPIO2, LED GPIO4, Servo GPIO5, Fan GPIO6.
+
+### Dang Thuc Hien (Dev Khac)
+- **Fall Detection** (`src/fall_detection_xiao/fall_detection_xiao.ino`): Board XIAO ESP32-S3 + MPU6050 + Edge Impulse model train san. Gac len nguoi, phat hien nga.
+- Giao thuc truyen thong giua XIAO va Main ESP32-S3: **WiFi hoac ESP-NOW** (chua chot).
+
+## Phan Cung
+
+| Thanh phan | Mo ta |
+|---|---|
+| ESP32-S3 N16R8 | Board chinh, 16MB Flash + 8MB PSRAM |
+| ENS160 | Cam bien chat luong khong khi (TVOC, eCO2, AQI) |
+| AHT21 | Cam bien nhiet do + do am |
+| LM75 | Cam bien nhiet do I2C du phong |
+| Buzzer | Canh bao am thanh |
+| LED | Chi thi trang thai |
+| Servo SG90 | Mo/dong co cau chap hanh |
+| Quat 12V + 2N2222 | Tan nhiet tu dong |
+| XIAO ESP32-S3 | Sub-board nhan dien nga (MPU6050 + Edge Impulse) |
+
+## Ke Hoach Tiep Theo
+
+1. **[Dev khac]** Hoan thien firmware XIAO ESP32-S3 (Edge Impulse inference + truyen tin hieu nga).
+2. **[Sau khi chot giao thuc]** Tich hop Fall Detection vao `Rtos_main.ino` (them 1 task WiFi/ESP-NOW).
+3. **[Tuy chon]** Xay dung Web UI (`src/index.html`) de giam sat trang thai he thong.
 
 ---
-*Báo cáo tiến độ được cập nhật định kỳ để theo dõi các thay đổi tiếp theo.*
+*Bao cao tien do cap nhat dinh ky.*

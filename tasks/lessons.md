@@ -10,14 +10,21 @@ Use this file to record mistakes, user corrections, and prevention rules.
 - Prevention rule:
 
 ## Entries
-### 2026-04-22
-- Context: ESP32-S3 sensor alert flow in `src/main.ino`, specifically `sendAlert()` cooldown handling.
-- Mistake / issue: Cooldown logic blocked alert escalation, so a transition like `WARNING -> DANGER` could leave `currentAlertLevel` stuck at `WARNING` and keep the buzzer pattern too slow.
-- Root cause: Notification throttling and hardware/system state updates were coupled in the same early-return path.
-- Prevention rule: When implementing cooldowns or rate limits, update the internal severity/state first and apply throttling only to external side effects such as Telegram messages or logs.
 
 ### 2026-04-22
-- Context: ESP32-S3 sensor state machine and Telegram `/stop` behavior in `src/main.ino`.
-- Mistake / issue: Generic sensor-error handling could mask a real `DANGER` reading, and `/stop` only cleared the current alert without suppressing immediate re-trigger.
-- Root cause: Safety priority order was not explicit in `processSystemLogic()`, and user intent for temporary silence was not modeled as its own state.
-- Prevention rule: In alert systems, evaluate hazard severity before degraded-sensor states, and model operator actions like mute/stop as explicit timed state rather than one-shot variable resets.
+- Context: ESP32-S3 sensor alert flow trong `src/main.ino`, cụ thể hàm `sendAlert()` và cooldown.
+- Mistake / issue: Cooldown logic chặn leo thang cảnh báo, khiến `WARNING → DANGER` bị kẹt và buzzer vẫn chạy pattern chậm.
+- Root cause: Throttle Telegram và cập nhật state phần cứng bị ghép chung vào cùng một early-return path.
+- Prevention rule: Khi dùng cooldown/rate-limit, cập nhật internal severity/state **trước**, chỉ áp throttle lên side-effects bên ngoài (Telegram, log).
+
+### 2026-04-22
+- Context: State machine cảm biến và hành vi Telegram `/stop` trong `src/main.ino`.
+- Mistake / issue: Xử lý lỗi cảm biến chung có thể che khuất đọc `DANGER` thật, và `/stop` không ngăn re-trigger ngay lập tức.
+- Root cause: Thứ tự ưu tiên an toàn không được khai báo rõ trong `processSystemLogic()`, và ý định "tạm tắt cảnh báo" của user chưa được mô hình hoá thành state riêng.
+- Prevention rule: Trong hệ thống alert, đánh giá nguy hiểm **trước** degraded-sensor. Model hành động operator (mute/stop) là timed state, không phải one-shot variable reset.
+
+### 2026-05-15
+- Context: Tích hợp Fall Detection vào `Rtos_main.ino` — ban đầu code UART2 trước khi dev XIAO hoàn thiện.
+- Mistake / issue: Code UART/Serial2 + TaskFallDetect được thêm vào rồi phải xoá ngay vì dev khác chưa xong, giao thức cũng chưa chốt (WiFi hay ESP-NOW).
+- Root cause: Implement integration code khi cả 2 phía chưa sẵn sàng và giao thức chưa được quyết định.
+- Prevention rule: Không code integration layer cho external system cho đến khi (1) phía kia đã xong API/protocol, và (2) giao thức truyền thông đã được chốt. Chỉ cần để TODO comment + ghi vào `hardware.md` và `todo.md`.
