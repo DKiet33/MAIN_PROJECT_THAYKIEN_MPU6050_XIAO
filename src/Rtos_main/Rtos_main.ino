@@ -86,6 +86,9 @@
 // ══════ Timing ══════
 #define SENSOR_READ_INTERVAL_MS 1000
 
+// ══════ Feature Flags ══════
+#define ENABLE_SERVO 0  // 0=skip servo (tránh hang khi chưa nối), 1=bật
+
 // ══════ Debug ══════
 #define DEBUG_SERIAL 1
 
@@ -142,10 +145,11 @@ struct SensorData {
 // ║                    GLOBAL OBJECTS                            ║
 // ╚══════════════════════════════════════════════════════════════╝
 
-ScioSense_ENS160 ens160(ENS160_I2CADDR_1);
+ScioSense_ENS160 ens160(ENS160_I2CADDR_0); // ADD=GND → 0x52
 Adafruit_AHTX0 aht21;
 Generic_LM75 lm75(LM75_I2C_ADDR);
 Servo servo;
+static bool g_servoAttached = false; // true nếu servo attach thành công
 
 // FreeRTOS primitives
 static QueueHandle_t sensorQueue = nullptr;
@@ -199,20 +203,25 @@ static SensorData readAllSensors() {
   d.lm75Temp = NAN;
   d.tempAvg = NAN;
 
-  // ENS160
+  // ENS160 — measure(true) bắt buộc để trigger đọc data mới
   if (ens160.available()) {
+    ens160.measure(true);
     d.tvoc = ens160.getTVOC();
     d.eco2 = ens160.geteCO2();
-    d.aqi = ens160.getAQI();
+    d.aqi  = ens160.getAQI();
     d.ens160Connected = true;
   }
 
   // AHT21
   sensors_event_t hum, tmp;
   if (aht21.getEvent(&hum, &tmp)) {
-    d.ahtTemp = tmp.temperature;
+    d.ahtTemp     = tmp.temperature;
     d.ahtHumidity = hum.relative_humidity;
     d.aht21Connected = validateTemp(d.ahtTemp);
+
+    // Bù nhiệt độ & độ ẩm vào ENS160 để tăng độ chính xác đo TVOC/eCO2
+    if (d.ens160Connected)
+      ens160.set_envdata(d.ahtTemp, d.ahtHumidity);
   }
 
   // LM75
@@ -376,8 +385,8 @@ void TaskActuator(void * /*pvParam*/) {
       break;
     }
 
-    // Chỉ ghi servo khi góc thay đổi để tránh jitter
-    if (targetAngle != lastAngle) {
+    // Chỉ ghi servo khi góc thay đổi và servo đã attach
+    if (g_servoAttached && targetAngle != lastAngle) {
       servo.write(targetAngle);
       lastAngle = targetAngle;
 #if DEBUG_SERIAL
@@ -467,13 +476,17 @@ void TaskBuzzerLED(void * /*pvParam*/) {
 void setup() {
 #if DEBUG_SERIAL
   Serial.begin(115200);
-  delay(200);
+  delay(500);  // đợi Serial ổn định
   Serial.println(
       "\n[MAIN] ═══ HỆ THỐNG PHÁT HIỆN KHÍ ĐỘC & NHIỆT ĐỘ (FreeRTOS) ═══");
   Serial.println("[MAIN] Board: ESP32-S3 N16R8 | 16MB Flash | 8MB OPI PSRAM");
+  Serial.flush();  // đảm bảo in ra trước khi có thể crash
 #endif
 
   // GPIO
+#if DEBUG_SERIAL
+  Serial.println("[INIT] GPIO pins..."); Serial.flush();
+#endif
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
   pinMode(LED_PIN, OUTPUT);
@@ -481,18 +494,36 @@ void setup() {
   pinMode(FAN_PIN, OUTPUT);
   digitalWrite(FAN_PIN, LOW); // Fan OFF mặc định
 
-  // Servo
-  servo.setPeriodHertz(50);           // 50Hz — tiêu chuẩn servo RC
-  servo.attach(SERVO_PIN, 500, 2500); // pulse: 500μs (0°) đến 2500μs (180°)
-  servo.write(SERVO_ANGLE_NORMAL);    // vị trí khởi đầu: 0°
-
-  // I2C + Sensors
+  // I2C — init TRƯỚC servo để debug sensor trước
+#if DEBUG_SERIAL
+  Serial.println("[INIT] Wire.begin..."); Serial.flush();
+#endif
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.setClock(400000);
+  Wire.setTimeOut(50); // 50ms timeout — tránh I2C hang khi bus bị stuck
 
-  ens160.begin();
-  if (ens160.available())
-    ens160.setMode(ENS160_OPMODE_STD);
+#if DEBUG_SERIAL
+  Serial.println("[INIT] I2C scan...");
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("[INIT]   Found device at 0x%02X\n", addr);
+    }
+  }
+#endif
+
+#if DEBUG_SERIAL
+  Serial.println("[INIT] ENS160.begin...");
+#endif
+  if (i2cPresent(ENS160_I2CADDR_0)) { // ADD=GND → 0x52
+    ens160.begin();
+    if (ens160.available())
+      ens160.setMode(ENS160_OPMODE_STD);
+  }
+
+#if DEBUG_SERIAL
+  Serial.println("[INIT] AHT21.begin...");
+#endif
   aht21.begin();
 
 #if DEBUG_SERIAL
@@ -502,6 +533,26 @@ void setup() {
                 i2cPresent(LM75_I2C_ADDR) ? "OK" : "MISSING");
   Serial.printf("[MAIN] Free SRAM: %u bytes\n",
                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+  Serial.flush();
+#endif
+
+#if ENABLE_SERVO
+  // Servo
+#if DEBUG_SERIAL
+  Serial.println("[INIT] Servo attach..."); Serial.flush();
+#endif
+  servo.setPeriodHertz(50);
+  servo.attach(SERVO_PIN, 500, 2500);
+  g_servoAttached = servo.attached();
+  if (g_servoAttached) servo.write(SERVO_ANGLE_NORMAL);
+#if DEBUG_SERIAL
+  Serial.printf("[INIT] Servo %s\n", g_servoAttached ? "OK" : "FAIL");
+  Serial.flush();
+#endif
+#else
+#if DEBUG_SERIAL
+  Serial.println("[INIT] Servo DISABLED (ENABLE_SERVO=0)"); Serial.flush();
+#endif
 #endif
 
   // FreeRTOS primitives
