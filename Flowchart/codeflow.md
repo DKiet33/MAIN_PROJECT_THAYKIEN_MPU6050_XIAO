@@ -190,8 +190,58 @@ flowchart TD
 
 ---
 
-## Ghi chu — Fall Detection (PENDING)
+## Codeflow — wearable_unified.ino (Wearable Board)
 
-- Board **XIAO ESP32-S3** + MPU6050 + Edge Impulse model dang duoc dev khac thuc hien.
-- Giao thuc tich hop: **WiFi hoac ESP-NOW** (chua chot).
-- Khi san sang: se them `TaskFallDetect` vao `Rtos_main.ino` de xu ly tin hieu nga tu XIAO.
+Phân hệ thiết bị đeo thắt lưng được lập trình bất đồng bộ kết hợp Web Server và vòng lặp thời gian thực để thực hiện đồng thời các tác vụ.
+
+### 1. Cấu hình và Hằng số chính (ei_config.h)
+- **Tần số lấy mẫu:** `100 Hz` (chu kỳ 10ms).
+- **Kích thước mẫu:** `300 mẫu` (3 giây dữ liệu liên tục).
+- **Thang đo cảm biến:** Gia tốc `±8g` (`ACCEL_SCALE = 4096.0f`), Vận tốc góc `±500 deg/s` (`GYRO_SCALE = 65.5f`).
+- **Bộ lọc chống báo giả:**
+  - `FALL_ALERT_THRESHOLD = 0.75f` (Ngưỡng xác suất kích hoạt).
+  - `FALL_CONFIRM_SLICES = 3` (Số lần xác nhận liên tục để lọc nhiễu).
+  - `FALL_COOLDOWN_MS = 6000` (Thời gian khóa còi/đèn sau khi ngã).
+
+### 2. Quản lý Chế độ Hoạt động (Operation Mode State Machine)
+- Chế độ mặc định khi khởi động hoặc tải lại trang web là **SUY LUẬN (INFERENCE)** để luôn đặt sự an toàn lên hàng đầu.
+- Web UI gửi yêu cầu `/setmode?mode=ingestion` để chuyển sang chế độ **THU MẪU (INGESTION)** khi cần huấn luyện mô hình.
+
+### 3. Quy trình Xử lý Dữ liệu trong Chế độ Suy Luận (Inference Flow)
+1. **Đọc dữ liệu MPU6050:** Lấy gia tốc và vận tốc góc thô.
+2. **Xoay trục & Hiệu chỉnh:** 
+   - Áp dụng ma trận xoay đồng bộ: Trục Z thành Hướng tới trước (Forward), Trục X thành Hướng bên trái (Left), Trục Y thành Hướng đi lên (Up).
+   - Trừ đi sai số hiệu chuẩn tĩnh (`off_aX`, `off_aY`, `off_aZ`, `off_gX`, `off_gY`, `off_gZ`) được tính toán khi người dùng nhấn nút Calibrate trên giao diện.
+3. **Đẩy bộ đệm trượt (Sliding Window):**
+   - Đẩy 6 trục vào bộ đệm `inferBuf` tại vị trí hiện tại.
+   - Khi lấp đầy một phân mảnh (slice), thực hiện dịch chuyển vùng nhớ bằng `memmove` để loại bỏ dữ liệu cũ nhất và nhường chỗ cho dữ liệu mới.
+4. **Suy luận phân loại AI:**
+   - Gọi thư viện Edge Impulse `run_classifier()` chạy trực tiếp trên chip.
+   - Trích xuất xác suất của 3 nhãn: `fall`, `walk`, `idle`.
+5. **Áp dụng Bộ lọc Debounce & Cooldown:**
+   - Nếu `fall >= 0.75` liên tiếp 3 lần và ngoài chu kỳ khóa 6s: Đóng dấu cảnh báo té ngã thật (`fall_count++`), bật LED sáng liên tục, và in log hệ thống.
+   - Nếu không đủ điều kiện: Nhấp nháy LED cực nhanh cảnh báo nhẹ hoặc tắt LED tùy thuộc vào các nhãn chuyển động thường.
+
+### 4. Quy trình Thu Mẫu và Data Augmentation (Ingestion Flow)
+1. **Thu thập dữ liệu:** Lưu trữ 300 mẫu liên tục vào mảng đệm động trong 3 giây ở tần số 100Hz.
+2. **On-Device Data Augmentation (Tăng cường dữ liệu):**
+   - **Tỉ lệ hóa (Scaling - 3x):** Tạo ra 3 bộ dữ liệu: Gốc (x1.0), Nhẹ (x0.94) và Mạnh (x1.06) đại diện cho các thể trạng người dùng khác nhau.
+   - **Gây nhiễu Gauss (Jittering):** Tự động thêm nhiễu trắng nhỏ vào các trục để tăng độ bền vững của mô hình.
+3. **Gửi HTTP Secure:** Đóng gói JSON theo chuẩn Edge Impulse nén payload và upload trực tiếp lên Ingestion API của Edge Impulse Studio thông qua khóa API được cấu hình.
+
+### 5. Danh sách các API Web Server của Thiết bị đeo
+- `GET /` : Trả về trang Web điều khiển Việt hóa nén `PROGMEM` từ `html_page.h`.
+- `GET /status` : Trả về chuỗi JSON chứa trạng thái hoạt động, thông số IMU thời gian thực, nhiệt độ và tổng số lần ngã (`fall_count`).
+- `GET /setmode?mode=...` : Thay đổi chế độ (`inference` hoặc `ingestion`).
+- `GET /calibrate` : Thực hiện hiệu chuẩn lấy offset tĩnh cho cảm biến MPU6050.
+- `GET /ingest_start?label=...` : Bắt đầu chu trình thu mẫu với nhãn tương ứng.
+- `GET /ingest_status` : Trả về tiến độ thu thập mẫu và trạng thái tải lên Edge Impulse.
+
+---
+
+## Ghi chú tích hợp liên thiết bị (Inter-device Integration Plan)
+
+- Giao thức tích hợp du kien: **WiFi (HTTP API/JSON)** hoac **ESP-NOW**.
+- Khi trien khai ket noi: se bo sung `TaskFallDetect` vao `Rtos_main.ino` để định kỳ gửi HTTP request đến IP của Thiết bị đeo lấy trạng thái `fall_count`, hoặc lắng nghe bản tin quảng bá ESP-NOW chứa event ngã để cập nhật ngay lập tức `g_alertLevel = ALERT_CRITICAL` cho còi và cơ cấu chấp hành trên board chính.
+
+

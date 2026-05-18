@@ -15,11 +15,13 @@
 - [x] Tao `src/main/Rtos_main.ino` — FreeRTOS version (4 tasks: SensorRead, AlertManager, BuzzerLED, Actuator).
 - [x] Bo Telegram Bot va MQ2 ra khoi `Rtos_main.ino`.
 - [x] Them Servo SG90 (GPIO5) va Quat 12V / NPN 2N2222 (GPIO6) vao `Rtos_main.ino`.
-- [x] Tao `src/fall_detection_xiao/fall_detection_xiao.ino` — sketch mau cho XIAO ESP32-S3.
-- [x] Cap nhat `hardware.md` voi pin map day du (Servo, Fan, XIAO sub-board).
-- [ ] **[PENDING — dev khac]** Hoan thien Fall Detection tren XIAO ESP32-S3 (MPU6050 + Edge Impulse).
-- [ ] **[PENDING]** Tich hop ket qua Fall Detection vao `Rtos_main.ino` qua WiFi hoac ESP-NOW.
+- [x] Tạo `src/fall_detection_xiao/fall_detection_xiao.ino` — sketch mẫu cho XIAO ESP32-S3.
+- [x] Cập nhật `hardware.md` với pin map đầy đủ (Servo, Fan, XIAO sub-board).
+- [x] Hoàn thiện Fall Detection trên XIAO ESP32-S3 (MPU6050 + Edge Impulse) với đầy đủ Web UI điều khiển tiếng Việt có dấu.
+- [x] Tích hợp bộ lọc chống báo giả (Debounce + Cooldown) cho luồng suy luận phát hiện té ngã.
+- [ ] **[PENDING]** Tích hợp kết quả Fall Detection vào `Rtos_main.ino` qua WiFi hoặc ESP-NOW.
 - [ ] Build web control UI trong `src/index.html`.
+
 
 ## Notes
 
@@ -36,4 +38,5 @@
 - 2026-04-22: Sua alert escalation logic va `/stop` suppression.
 - 2026-05-15: Tao `Rtos_main.ino` voi FreeRTOS (bo Telegram, MQ2; them Servo, Fan).
 - 2026-05-15: Tao `fall_detection_xiao.ino` — sketch mau XIAO ESP32-S3.
-- 2026-05-15: Xac dinh giao thuc Fall Detection se la WiFi/ESP-NOW (cho dev khac).
+- 2026-05-18: Hoàn thiện dự án thiết bị đeo phát hiện té ngã với MPU6050 và XIAO ESP32-S3 (Edge Impulse, Dual-tab Ingestion/Inference Web UI, 100% tiếng Việt có dấu, tích hợp bộ lọc chống báo giả liên tục Debounce + Cooldown).
+

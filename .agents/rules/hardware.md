@@ -56,15 +56,18 @@ Fan(+) → 12V
 
 ## Sub-board — XIAO ESP32-S3 (Fall Detection)
 
-> **Trạng thái:** Đang được dev khác thực hiện.  
-> **Giao thức dự kiến:** WiFi hoặc ESP-NOW (chưa quyết định cuối).
+> **Trạng thái:** Đã hoàn thành (Fully Integrated).  
+> **Chức năng:** Thu thập mẫu (Ingestion) sang Edge Impulse & Suy luận liên tục (Inference) phát hiện té ngã thời gian thực, có Web UI điều khiển tiếng Việt đầy đủ và Serial Log có dấu.
 
-| Function         | Pin XIAO                | Notes                              |
+| Function         | Pin XIAO / ESP32-S3     | Notes                              |
 | ---------------- | ----------------------- | ---------------------------------- |
-| MPU6050 SDA      | GPIO5                   | I2C                                |
-| MPU6050 SCL      | GPIO6                   | I2C                                |
-| Giao tiếp Main   | WiFi / ESP-NOW          | Gắn lên người, phát hiện ngã      |
-| GND              | GND                     | Chung với Main board nếu có dây   |
+| MPU6050 SDA      | GPIO5 (D4)              | I2C SDA kết nối cảm biến MPU6050    |
+| MPU6050 SCL      | GPIO6 (D5)              | I2C SCL kết nối cảm biến MPU6050    |
+| LED trạng thái   | GPIO21                  | LED cam trên board (Active LOW)    |
+| Button BOOT      | GPIO0                   | Nút nhấn trên board (Active LOW)   |
+| Giao tiếp        | WiFi (HTTP Server)      | Xem Dashboard và các API trạng thái |
+| Nguồn cấp        | 5V USB / LiPo battery   | Đeo ở thắt lưng để phát hiện té ngã |
+
 
 ---
 
@@ -93,6 +96,7 @@ Fan(+) → 12V
 - [Cảm biến nhiệt độ CJMCU-75 LM75 hỗ trợ I2C](https://icdayroi.com/cam-bien-nhiet-do-cjmcu-75-lm75-ho-tro-i2c)
 - [Cảm biến khí gas MQ-2](https://icdayroi.com/cam-bien-khi-gas-mq-2) *(đã bỏ khỏi Rtos_main)*
 
-### 2. Thiết bị đeo tay (Sử dụng XIAO ESP32S3 + MPU6050)
+### 2. Thiết bị đeo thắt lưng (Sử dụng XIAO ESP32S3 + MPU6050)
 - [XIAO ESP32S3 Getting Started](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/)
 - Cảm biến gia tốc MPU6050
+

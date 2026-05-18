@@ -78,3 +78,58 @@ flowchart TD
     H -- WARNING or DANGER --> I[Bi chan trong 60 giay]
     H -- CRITICAL --> J[Van cho phep canh bao]
 ```
+
+## PHÂN HỆ THIẾT BỊ ĐEO THẮT LƯNG (WEARABLE FALL DETECTION)
+
+Phân hệ này chạy trên Seeed Studio XIAO ESP32-S3 với cảm biến MPU6050, hỗ trợ chế độ kép: Thu thập dữ liệu (Ingestion) và Suy luận thời gian thực (Inference).
+
+### 1. Flowchart tổng thế Thiết bị đeo (Wearable Unified Loop)
+```mermaid
+flowchart TD
+    Start([Khởi động XIAO]) --> Setup[Setup: I2C, MPU6050, WiFi AP/Client, Web Server, LED]
+    Setup --> CheckMode{operationMode?}
+    
+    %% INFERENCE MODE
+    CheckMode -- INFERENCE --> LoopInfer[Đọc MPU6050 @ 100Hz]
+    LoopInfer --> AxisRotate[Xoay trục: Z->Fwd, X->Left, Y->Up\nTrừ sai số Hiệu chuẩn Offset]
+    AxisRotate --> PushBuffer[Đẩy vào bộ đệm trượt inferBuf]
+    PushBuffer --> CheckBufFull{inferBuf đầy?}
+    CheckBufFull -- Chưa --> ServeWeb[Xử lý Web Server & server.handleClient]
+    CheckBufFull -- Rồi --> RunAI[Chạy Edge Impulse run_classifier]
+    RunAI --> FilterBlock[Bộ lọc chống báo giả: Debounce & Cooldown]
+    FilterBlock --> ServeWeb
+    
+    %% INGESTION MODE
+    CheckMode -- INGESTION --> LoopIngest{Trạng thái Ingestion?}
+    LoopIngest -- READY --> IngestReady[Nhấp nháy LED chậm\nChờ lệnh Bắt đầu thu mẫu từ Web UI]
+    LoopIngest -- SAMPLING --> IngestSample[Đọc MPU6050 @ 100Hz đủ 300 mẫu\nLưu vào bộ đệm mảng động]
+    IngestSample --> IngestUpload[Thực hiện buildJson + Data Augmentation\nUpload HTTP Secure sang Edge Impulse Studio]
+    IngestUpload --> IngestReady
+    
+    ServeWeb --> CheckMode
+```
+
+### 2. Chi tiết Bộ lọc chống báo giả (Debounce & Cooldown)
+```mermaid
+flowchart TD
+    AI[Kết quả run_classifier] --> CheckThres{fall >= FALL_ALERT_THRESHOLD 0.75?}
+    
+    CheckThres -- Có --> IncConfirm[Tăng bộ đếm fallConfirm++]
+    IncConfirm --> CheckSlices{fallConfirm >= FALL_CONFIRM_SLICES 3?}
+    
+    CheckSlices -- Đúng --> CheckCooldown{millis - lastAlertMs >= FALL_COOLDOWN_MS 6000?}
+    CheckSlices -- Sai --> FlashLED[Nháy LED cực nhanh cảnh báo nhẹ]
+    
+    CheckCooldown -- Đúng --> TriggerAlert[Xác nhận té ngã!\nfallConfirm = 0\nlastAlertMs = millis()\nfall_count++\nBật LED sáng luôn\nlogPrintf CẢNH BÁO TÉ NGÃ]
+    CheckCooldown -- Sai --> IgnoreAlert[Bỏ qua do đang trong thời gian khóa]
+    
+    CheckThres -- Không --> CheckWalk{walk > idle?}
+    CheckWalk -- Đúng --> WalkAct[fallConfirm = 0\nNháy LED vừa phải]
+    CheckWalk -- Sai --> IdleAct[fallConfirm = 0\nTắt LED]
+    
+    TriggerAlert --> End[Kết thúc chu kỳ lọc]
+    FlashLED --> End
+    IgnoreAlert --> End
+    WalkAct --> End
+    IdleAct --> End
+```

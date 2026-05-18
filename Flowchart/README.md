@@ -13,11 +13,14 @@ He thong canh bao da chuc nang chay tren ESP32-S3 N16R8, tich hop cam bien chat 
   - `TaskActuator` (Core0/Pri3): Dieu khien Servo SG90 va Quat 12V (NPN 2N2222)
 - **Pin Map day du**: ENS160/AHT21/LM75 qua I2C, Buzzer GPIO2, LED GPIO4, Servo GPIO5, Fan GPIO6.
 
-### Dang Thuc Hien (Dev Khac)
-- **Fall Detection** (`src/fall_detection_xiao/fall_detection_xiao.ino`): Board XIAO ESP32-S3 + MPU6050 + Edge Impulse model train san. Gac len nguoi, phat hien nga.
-- Giao thuc truyen thong giua XIAO va Main ESP32-S3: **WiFi hoac ESP-NOW** (chua chot).
+### Đã Hoàn Thành (Wearable Fall Detection)
+- **Fall Detection** (`src/wearable/wearable_unified`): Hệ thống thiết bị đeo thắt lưng sử dụng Seeed Studio XIAO ESP32-S3 + cảm biến MPU6050 + mô hình suy luận Edge Impulse. 
+  - Tích hợp Web UI điều khiển trực quan tiếng Việt, hỗ trợ chế độ kép: Thu thập mẫu (Ingestion) trực tiếp gửi lên Edge Impulse Studio và Suy luận liên tục (Inference) phát hiện té ngã thời gian thực.
+  - Tích hợp bộ lọc chống báo giả cao cấp: Xác nhận liên tiếp (`FALL_CONFIRM_SLICES`) và khóa thời gian chờ (`FALL_COOLDOWN_MS`).
+  - Bản địa hóa 100% tiếng Việt có dấu cho toàn bộ hệ thống logs Serial Monitor và giao diện web.
 
 ## Phan Cung
+
 
 | Thanh phan | Mo ta |
 |---|---|
@@ -33,9 +36,10 @@ He thong canh bao da chuc nang chay tren ESP32-S3 N16R8, tich hop cam bien chat 
 
 ## Ke Hoach Tiep Theo
 
-1. **[Dev khac]** Hoan thien firmware XIAO ESP32-S3 (Edge Impulse inference + truyen tin hieu nga).
-2. **[Sau khi chot giao thuc]** Tich hop Fall Detection vao `Rtos_main.ino` (them 1 task WiFi/ESP-NOW).
-3. **[Tuy chon]** Xay dung Web UI (`src/index.html`) de giam sat trang thai he thong.
+1. **[Tích hợp truyền thông]** Kết nối giao tiếp không dây (WiFi hoặc ESP-NOW) giữa thiết bị đeo XIAO ESP32-S3 và board chính ESP32-S3 N16R8 để truyền cảnh báo ngã trực tiếp.
+2. **[Tích hợp firmware chính]** Bổ sung Task nhận tín hiệu ngã từ thiết bị đeo vào `Rtos_main.ino` để kích hoạt còi/đèn cảnh báo đồng bộ trên board chính.
+3. **[Tùy chọn]** Xây dựng Web UI (`src/index.html`) tập trung giám sát toàn bộ hệ thống (cả chất lượng không khí của board chính và trạng thái thiết bị đeo).
+
 
 ---
 *Bao cao tien do cap nhat dinh ky.*
