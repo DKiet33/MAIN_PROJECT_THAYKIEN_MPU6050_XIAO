@@ -134,8 +134,8 @@ Thiết bị sử dụng cảm biến quán tính 6 trục MPU6050 kết hợp v
 Nếu chỉ dựa vào kết quả thô của mô hình AI, các hành động như đặt mạnh thiết bị lên bàn, vung tay đột ngột sẽ dễ gây ra báo động giả (False Positives). Hệ thống thiết lập 2 bộ lọc thông minh:
 
 #### A. Bộ lọc tích lũy xác nhận liên tiếp (Confirm Slices Filter)
-*   Tham số: `FALL_CONFIRM_SLICES = 3`
-*   **Nguyên lý:** Khi mô hình AI trả ra xác suất té ngã vượt ngưỡng an toàn (`FALL_ALERT_THRESHOLD = 0.75`), thuật toán không lập tức phát còi cứu nạn. Hệ thống bắt buộc phải thấy chỉ số này duy trì vượt ngưỡng liên tục trong ít nhất 3 khung hình suy luận kế tiếp (mỗi khung hình cách nhau 250ms). Nếu ở khung hình thứ 2 xác suất tụt xuống, bộ đếm bị reset ngay lập tức. Điều này triệt tiêu hoàn toàn các va chạm một chu kỳ (như va quẹt tay vào thành bàn).
+*   Tham số: `FALL_CONFIRM_SLICES = 2`
+*   **Nguyên lý:** Khi mô hình AI trả ra xác suất té ngã vượt ngưỡng an toàn (`FALL_ALERT_THRESHOLD = 0.85`), thuật toán không lập tức phát còi cứu nạn. Hệ thống bắt buộc phải thấy chỉ số này duy trì vượt ngưỡng liên tục trong ít nhất 2 khung hình suy luận kế tiếp (mỗi khung hình cách nhau 250ms). Nếu ở khung hình thứ 2 xác suất tụt xuống, bộ đếm bị reset ngay lập tức. Điều này triệt tiêu hoàn toàn các va chạm một chu kỳ (như va quẹt tay vào thành bàn).
 
 #### B. Bộ lọc thời gian chờ trượt đệm (Cooldown Lockout)
 *   Tham số: `FALL_COOLDOWN_MS = 6000` (6 giây)
@@ -161,8 +161,8 @@ Trang web điều khiển được lập trình bằng ngôn ngữ HTML/CSS/JS t
 │  - Đứng yên: █ 5%                                      │
 ├────────────────────────────────────────────────────────┤
 │  LOG CẢNH BÁO TÉ NGÃ TẬP TRUNG                         │
-│  - [11:20:15] 🚨 CẢNH BÁO TÉ NGÃ #1 (conf=0.85, x3)   │
-│  - [11:20:21] 🚨 CẢNH BÁO TÉ NGÃ #2 (conf=0.91, x3)   │
+│  - [11:20:15] 🚨 CẢNH BÁO TÉ NGÃ #1 (conf=0.85, x2)   │
+│  - [11:20:21] 🚨 CẢNH BÁO TÉ NGÃ #2 (conf=0.91, x2)   │
 └────────────────────────────────────────────────────────┘
 ```
 

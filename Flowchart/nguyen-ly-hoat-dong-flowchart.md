@@ -112,10 +112,10 @@ flowchart TD
 ### 2. Chi tiết Bộ lọc chống báo giả (Debounce & Cooldown)
 ```mermaid
 flowchart TD
-    AI[Kết quả run_classifier] --> CheckThres{fall >= FALL_ALERT_THRESHOLD 0.75?}
+    AI[Kết quả run_classifier] --> CheckThres{fall >= FALL_ALERT_THRESHOLD 0.85?}
     
     CheckThres -- Có --> IncConfirm[Tăng bộ đếm fallConfirm++]
-    IncConfirm --> CheckSlices{fallConfirm >= FALL_CONFIRM_SLICES 3?}
+    IncConfirm --> CheckSlices{fallConfirm >= FALL_CONFIRM_SLICES 2?}
     
     CheckSlices -- Đúng --> CheckCooldown{millis - lastAlertMs >= FALL_COOLDOWN_MS 6000?}
     CheckSlices -- Sai --> FlashLED[Nháy LED cực nhanh cảnh báo nhẹ]

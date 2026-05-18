@@ -35,8 +35,8 @@
 // ════════════════════════════════════════════════════════════════
 
 // ── Includes — thứ tự quan trọng: EI trước Arduino headers ───────
-#include <MAIN_PROJECT_THAYKIEN_inferencing.h>
 #include <Arduino.h>
+#include <MAIN_PROJECT_THAYKIEN_inferencing.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
