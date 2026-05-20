@@ -22,15 +22,17 @@ flowchart TD
         A[XIAO ESP32-S3] <--> B[MPU6050 IMU]
         A --> C[Edge Impulse AI Model]
         C --> D["Web UI Tiếng Việt (PROGMEM)"]
+        C -->|"ALERT_FALL packet\n3x ESP-NOW @ Kênh 1"| E[["ESP-NOW TX"]]
     end
 
     subgraph Main["2. KHỐI TRẠM CHÍNH (Main Station Board)"]
-        E[ESP32-S3 N16R8] <--> F["I2C Bus (ENS160 + AHT21 + LM75)"]
-        E --> G[Actuators: Quạt 12V + Servo SG90]
-        E --> H[Alerts: Còi Buzzer + LED Trạng thái]
+        F[["ESP-NOW RX"]] --> G[ESP32-S3 N16R8]
+        G <--> H["I2C Bus (ENS160 + AHT21 + LM75)"]
+        G --> I[Actuators: Quạt 12V + Servo SG90]
+        G --> J[Alerts: Còi Buzzer + LED Trạng thái]
     end
 
-    Wearable -. "WiFi / ESP-NOW\n(Tích hợp kế tiếp)" .-> Main
+    E -. "ESP-NOW Unicast\nKênh Wi-Fi 1 (<10ms)\n[CODE XONG - CHƯA TEST]" .-> F
 ```
 
 ---
@@ -41,6 +43,7 @@ flowchart TD
 *   **MCU:** ESP32-S3 N16R8 (16MB Flash, 8MB PSRAM cấu hình OPI).
 *   **Bộ nhớ:** Hỗ trợ dung lượng lưu trữ lớn phục vụ lưu trữ web UI và đệm dữ liệu.
 *   **Hệ điều hành:** FreeRTOS đa nhiệm thời gian thực (Real-time Multitask).
+*   **Firmware chính:** `src/Rtos_main/Rtos_main.ino`
 
 ### 2. Bảng phân phối chân linh kiện (Pin Mapping)
 
@@ -59,20 +62,24 @@ flowchart TD
 | :--- | :--- | :--- |
 | **MPU6050 SDA** | GPIO5 | Truyền nhận dữ liệu gia tốc và vận tốc góc |
 | **MPU6050 SCL** | GPIO6 | Phát xung clock I2C cho IMU |
-| **Truyền thông** | Không dây | WiFi / ESP-NOW truyền tín hiệu khẩn cấp về Trạm Chính |
+| **Truyền thông** | Không dây | **ESP-NOW Kênh 1** — truyền `FallAlertPacket` siêu tốc về Trạm Chính |
 
 ---
 
 ## 🧠 CHƯƠNG III: KHỐI CHÍNH - FREERTOS ĐA NHIỆM THỜI GIAN THỰC
 *(Mã nguồn phát triển: `src/Rtos_main/Rtos_main.ino`)*
 
-Để đảm bảo tính năng an toàn tính mạng không bao giờ bị trễ do nghẽn CPU, khối trạm chính chạy 4 Task FreeRTOS độc lập phân bổ trên 2 nhân xử lý:
+Để đảm bảo tính năng an toàn tính mạng không bao giờ bị trễ do nghẽn CPU, khối trạm chính chạy 4 Task FreeRTOS độc lập phân bổ trên 2 nhân xử lý. **Ngoài ra, Trạm chính hiện đã tích hợp nhận tín hiệu ESP-NOW từ Thiết bị đeo.**
 
 ```mermaid
 flowchart TD
+    subgraph ESPNOW["ESP-NOW RX (ISR Callback)"]
+        RECV[OnDataRecv callback\nCập nhật g_alertLevel=ALERT_FALL\nLưu g_lastFallTime=millis]
+    end
+
     subgraph Core_1["NHÂN 1 (Xử lý Cảm biến & Cảnh báo)"]
         T1["TaskSensorRead (Pri 3)\nChu kỳ: 1000ms\nĐọc ENS160, AHT21, LM75"]
-        T2["TaskAlertManager (Pri 4)\nChu kỳ: Trực tiếp từ Queue\nTính toán mức AlertLevel"]
+        T2["TaskAlertManager (Pri 4)\nChu kỳ: Trực tiếp từ Queue\nTính toán mức AlertLevel\nLatching 12s / Danger Overwrite"]
         T3["TaskBuzzerLED (Pri 5)\nChu kỳ: 50ms\nPhát còi/LED theo nhịp"]
     end
 
@@ -80,6 +87,7 @@ flowchart TD
         T4["TaskActuator (Pri 3)\nChu kỳ: 200ms\nĐiều khiển Servo & Quạt"]
     end
 
+    RECV -- "alertMutex" --> T2
     T1 -- "sensorQueue (Độ dài = 5)" --> T2
     T2 -- "g_alertLevel (Bảo vệ bởi alertMutex)" --> T3
     T2 -- "g_alertLevel (Bảo vệ bởi alertMutex)" --> T4
@@ -87,64 +95,68 @@ flowchart TD
 
 ### 1. Đồng bộ hóa phần cứng & Phần mềm (Sync Primitives)
 *   **`sensorQueue`:** Chuyển dữ liệu cấu trúc `SensorData` từ Task đọc sang Task xử lý. Cơ chế tự động giải phóng phần tử cũ nhất nếu đệm đầy để tránh thất thoát dữ liệu mới.
-*   **`alertMutex`:** Khóa bảo vệ biến trạng thái toàn cục `g_alertLevel` khi được ghi từ Task Quản lý và đọc từ các Task đầu ra (Còi, Động cơ).
+*   **`alertMutex`:** Khóa bảo vệ biến trạng thái toàn cục `g_alertLevel` khi được ghi từ Task Quản lý (hoặc ESP-NOW callback) và đọc từ các Task đầu ra (Còi, Động cơ).
 
 ### 2. Thuật toán Hợp nhất Cảm biến (Sensor Fusion Logic)
 *   **Cross-Check chéo nhiệt độ:** Đọc đồng thời cảm biến nhiệt độ tích hợp `AHT21` và cảm biến nhiệt độ dự phòng công nghiệp `LM75` (địa chỉ `0x48`).
 *   **Thuật toán tự sửa lỗi (Self-Healing):**
-    *   Nếu cả 2 cảm biến hoạt động tốt: $Nhiệt\ độ\ trung\ bình = \frac{T_{AHT21} + T_{LM75}}{2}$.
-    *   Nếu phát hiện sự chênh lệch bất thường $> 15^\circ\text{C}$: Hệ thống đánh dấu trạng thái nghi ngờ, tự động ưu tiên lấy giá trị của cảm biến chính xác cao `LM75` để tính toán nhằm tránh cảnh báo giả do lỗi phần cứng.
-    *   Nếu một trong hai cảm biến mất kết nối vật lý, hệ thống vẫn duy trì hoạt động bằng cảm biến còn lại và chuyển cảnh báo hệ thống sang mức `WARNING` để thông báo bảo trì.
+    *   Nếu cả 2 cảm biến hoạt động tốt: Nhiệt độ trung bình = (T_AHT21 + T_LM75) / 2.
+    *   Nếu phát hiện sự chênh lệch bất thường > 15°C: Hệ thống đánh dấu trạng thái nghi ngờ, tự động ưu tiên lấy giá trị của cảm biến chính xác cao `LM75`.
+    *   Nếu một trong hai cảm biến mất kết nối vật lý, hệ thống vẫn duy trì hoạt động bằng cảm biến còn lại và chuyển cảnh báo hệ thống sang mức `WARNING`.
 
 ### 3. Phân cấp Cảnh báo & Mô hình Phản ứng (Alert Levels)
 
-| Mức Cảnh Báo (Alert Level) | Điều Kiện Kích Hoạt | Chỉ Thị Buzzer / LED | Trạng Thái Cơ Cấu Chấp Hành (Actuator) |
+| Mức Cảnh Báo | Điều Kiện Kích Hoạt | Chỉ Thị Buzzer / LED | Trạng Thái Actuator |
 | :--- | :--- | :--- | :--- |
-| **ALERT_NONE** | Mọi chỉ số môi trường ở ngưỡng an toàn | LED: **OFF**<br>Buzzer: **OFF** | Servo: **0°** (Đóng cửa thông gió)<br>Quạt 12V: **OFF** (Tiết kiệm điện) |
-| **ALERT_WARNING** | Mất kết nối $\ge 1$ cảm biến<br>**Hoặc:** eCO2 $\ge 800$ppm, TVOC $\ge 150$ppb, AQI $\ge 3$, Temp $\ge 45^\circ\text{C}$ | LED: **ON**<br>Buzzer: **200ms ON / 800ms OFF** (Nhịp chậm) | Servo: **90°** (Mở hé cửa thông gió)<br>Quạt 12V: **ON** (Thông khí nhẹ) |
-| **ALERT_DANGER** | eCO2 $\ge 1500$ppm, TVOC $\ge 500$ppb, AQI $\ge 4$, Temp $\ge 60^\circ\text{C}$ | LED: **ON**<br>Buzzer: **100ms ON / 200ms OFF** (Nhịp dồn dập) | Servo: **180°** (Mở toang toàn bộ cửa)<br>Quạt 12V: **ON** (Hút khí công suất tối đa) |
-| **ALERT_CRITICAL** | Phát hiện té ngã khẩn cấp từ Wearable Sub-Board | LED: **ON**<br>Buzzer: **ON LIÊN TỤC** (Hét còi cấp cứu) | Servo: **180°** (Mở cửa thoát hiểm)<br>Quạt 12V: **ON** |
+| **ALERT_NONE (0)** | Mọi chỉ số môi trường ở ngưỡng an toàn | LED: OFF / Buzzer: OFF | Servo: 0° / Quạt: OFF |
+| **ALERT_WARNING (2)** | Mất kết nối ≥ 1 cảm biến **Hoặc:** eCO2 ≥ 800ppm, TVOC ≥ 150ppb | LED: ON / Buzzer: 200ms ON / 800ms OFF | Servo: 90° / Quạt: ON |
+| **ALERT_DANGER (3)** | eCO2 ≥ 1500ppm, TVOC ≥ 500ppb, AQI ≥ 4, Nhiệt độ ≥ 60°C | LED: ON / Buzzer: 100ms ON / 200ms OFF | Servo: 180° / Quạt: ON |
+| **ALERT_CRITICAL (4)** | Ngưỡng nguy hiểm tột cùng từ cảm biến | LED: ON / Buzzer: LIÊN TỤC | Servo: 180° / Quạt: ON |
+| **ALERT_FALL (5)** ⭐ | Nhận gói tin `FallAlertPacket` từ Thiết bị đeo qua ESP-NOW | LED: Nháy siêu nhanh 5Hz / Buzzer: LIÊN TỤC | Servo: **0°** (giữ nguyên) / Quạt: **OFF** |
+
+> **Cơ chế ưu tiên an toàn (Danger Overwrite):** Nếu `ALERT_DANGER`/`ALERT_CRITICAL` xảy ra đồng thời với `ALERT_FALL`, hệ thống ngay lập tức đè để bật quạt và mở servo 180° bảo vệ tính mạng.  
+> **Cơ chế Latching 12s:** Trạng thái `ALERT_FALL` được duy trì 12 giây sau gói tin cuối cùng nhận được trước khi tự động giải phóng.
 
 ---
 
 ## 🏃 CHƯƠNG IV: THIẾT BỊ ĐEO THẮT LƯNG - AI NHẬN DIỆN TÉ NGÃ EDGE AI
-*(Mã nguồn phát triển: `src/wearable/wearable_unified/`)*
+*(Mã nguồn phát triển: `src/wearable/wearable_unified_rtos/wearable_unified_rtos.ino`)*
 
-Thiết bị sử dụng cảm biến quán tính 6 trục MPU6050 kết hợp với nhân vi điều khiển XIAO ESP32-S3 nhỏ gọn.
+Thiết bị sử dụng cảm biến quán tính 6 trục MPU6050 kết hợp với nhân vi điều khiển XIAO ESP32-S3 nhỏ gọn, **hiện chạy đa nhiệm FreeRTOS với 3 task độc lập.**
 
-### 1. Động cơ hai chế độ tích hợp (Dual-Mode Engine)
+### 1. FreeRTOS Task Map (Wearable)
+| Task | Core | Priority | Stack | Chức năng |
+| :--- | :--- | :--- | :--- | :--- |
+| `TaskIMURead` | Core 1 | 5 | 4096 B | Đọc MPU6050 @ 100Hz, đẩy vào `imuQueue` |
+| `TaskEdgeAI` | Core 1 | 4 | 4096 B | Lấy từ `imuQueue`, suy luận AI, Debounce/Cooldown, **phát ESP-NOW** khi phát hiện ngã |
+| `TaskNetworkWeb` | Core 0 | 3 | 6144 B | Web server, state machine INGESTION, HTTPS upload Edge Impulse |
+
+### 2. Giao tiếp ESP-NOW từ Thiết bị đeo
+*   Wi-Fi chế độ `WIFI_AP_STA` — SoftAP `Wearable_AP` khóa cứng ở Kênh 1
+*   Gói tin nén `FallAlertPacket` (packed struct, 10 byte): `alertType=0xFA`, `fallCount`, `confidence`, `timestamp`
+*   Phát **3 lần liên tiếp** (giãn cách 5ms) khi xác nhận ngã để chống mất gói do nhiễu
+
+### 3. Động cơ hai chế độ tích hợp (Dual-Mode Engine)
 *   **Chế độ 1: THU MẪU (Data Ingestion Mode)**
-    *   Thu thập dữ liệu cảm biến thô (Gia tốc 3 trục $a_X, a_Y, a_Z$ và Vận tốc góc 3 trục $g_X, g_Y, g_Z$) ở tần số chuẩn $100\text{Hz}$.
+    *   Thu thập dữ liệu cảm biến thô (6 trục IMU) ở tần số chuẩn 100Hz.
     *   Tự động chia nhỏ, gán nhãn hoạt động (`idle`, `walk`, `fall`) thông qua giao diện điều khiển trực tuyến.
-    *   Kết nối HTTP client bảo mật gửi thẳng tệp JSON nén lên server **Edge Impulse Studio**.
+    *   Kết nối HTTPS gửi thẳng tệp JSON nén lên server **Edge Impulse Studio**.
 *   **Chế độ 2: SUY LUẬN (Real-time Inference Mode)**
-    *   Nhúng trực tiếp mô hình phân loại được huấn luyện từ Edge Impulse bằng thư viện tối ưu hóa phần cứng.
-    *   Chạy suy luận liên tục dạng cửa sổ trượt (Continuous Sliding Window) với chu kỳ đáp ứng cực nhanh $\approx 370\text{ms}$.
+    *   Nhúng trực tiếp mô hình phân loại được huấn luyện từ Edge Impulse.
+    *   Chạy suy luận liên tục dạng cửa sổ trượt (Continuous Sliding Window) với chu kỳ đáp ứng ~370ms.
 
-### 2. Công nghệ Tăng cường Dữ liệu tại chỗ (On-Device Data Augmentation)
-Để giải quyết bài toán thiếu dữ liệu té ngã thực tế (vốn rất nguy hiểm khi cho người thử nghiệm ngã thật nhiều lần), hệ thống tích hợp trực tiếp thuật toán sinh dữ liệu nhân tạo ngay trên chip:
-1.  **Thuật toán Nhân Tỷ Lệ (Scaling - 3x Augmentation):**
-    *   Mỗi chuỗi chuyển động thô được tự động nhân bản ra 3 biến thể: **Chuỗi Gốc (x1.00)**, **Biến thể Nhẹ (x0.94)** và **Biến thể Mạnh (x1.06)**.
-    *   Mô phỏng độ mạnh/yếu của các thể trạng người dùng khác nhau (người nhẹ cân rơi chậm, người nặng cân rơi nhanh).
-2.  **Thuật toán Gây Nhiễu Quán Tính (Jittering Mode):**
-    *   Tự động cộng thêm một lượng nhiễu ngẫu nhiên Gauss cực nhỏ vào dữ liệu gốc ($\pm0.02g$ cho gia tốc và $\pm1^\circ/\text{s}$ cho con quay hồi chuyển).
-    *   Giúp tăng cường độ bền vững của mô hình AI chống lại các rung lắc môi trường không mong muốn.
+### 4. Công nghệ Tăng cường Dữ liệu tại chỗ (On-Device Data Augmentation)
+1.  **Thuật toán Nhân Tỷ Lệ (Scaling - 3x Augmentation):** Mỗi chuỗi chuyển động thô tự động nhân bản ra 3 biến thể (x1.00, x0.94, x1.06).
+2.  **Thuật toán Gây Nhiễu Quán Tính (Jittering Mode):** Thêm nhiễu ngẫu nhiên Gauss cực nhỏ (±0.02g gia tốc / ±1°/s con quay).
 
-### 3. Công nghệ Lọc & Khống chế Báo động Giả (Anti-False Alarm Layer)
-Nếu chỉ dựa vào kết quả thô của mô hình AI, các hành động như đặt mạnh thiết bị lên bàn, vung tay đột ngột sẽ dễ gây ra báo động giả (False Positives). Hệ thống thiết lập 2 bộ lọc thông minh:
-
-#### A. Bộ lọc tích lũy xác nhận liên tiếp (Confirm Slices Filter)
-*   Tham số: `FALL_CONFIRM_SLICES = 2`
-*   **Nguyên lý:** Khi mô hình AI trả ra xác suất té ngã vượt ngưỡng an toàn (`FALL_ALERT_THRESHOLD = 0.85`), thuật toán không lập tức phát còi cứu nạn. Hệ thống bắt buộc phải thấy chỉ số này duy trì vượt ngưỡng liên tục trong ít nhất 2 khung hình suy luận kế tiếp (mỗi khung hình cách nhau 250ms). Nếu ở khung hình thứ 2 xác suất tụt xuống, bộ đếm bị reset ngay lập tức. Điều này triệt tiêu hoàn toàn các va chạm một chu kỳ (như va quẹt tay vào thành bàn).
-
-#### B. Bộ lọc thời gian chờ trượt đệm (Cooldown Lockout)
-*   Tham số: `FALL_COOLDOWN_MS = 6000` (6 giây)
-*   **Nguyên lý:** Vì dữ liệu của một cú ngã thật sẽ lưu lại trong bộ đệm trượt `inferBuf` trong vòng vài giây, mô hình AI sẽ liên tục báo "Té ngã" trong 3-4 chu kỳ kế tiếp. Bộ lọc Cooldown sẽ khóa tín hiệu phát báo động trong 6 giây sau khi phát hiện cú ngã đầu tiên, giúp còi phát đúng nhịp và giao diện web không bị kẹt gửi thông báo liên tục.
+### 5. Công nghệ Lọc & Khống chế Báo động Giả (Anti-False Alarm Layer)
+*   **Confirm Slices Filter:** `FALL_ALERT_THRESHOLD = 0.85`, `FALL_CONFIRM_SLICES = 3` — xác suất ngã phải vượt ngưỡng liên tục 3 lần.
+*   **Cooldown Lockout:** `FALL_COOLDOWN_MS = 6000` (6 giây) — khóa tín hiệu phát báo động sau cú ngã đầu tiên.
 
 ---
 
 ## 🌐 CHƯƠNG V: GIAO DIỆN QUẢN TRỊ VIỆT HÓA CHUYÊN NGHIỆP
-*(Tệp tin lưu trữ: `src/wearable/wearable_unified/html_page.h`)*
+*(Tệp tin lưu trữ: `src/wearable/wearable_unified_rtos/html_page.h`)*
 
 Trang web điều khiển được lập trình bằng ngôn ngữ HTML/CSS/JS thuần, tối ưu hóa dung lượng để nén cứng vào bộ nhớ Flash (`PROGMEM`) của vi điều khiển, truy cập trực tiếp qua địa chỉ IP của thiết bị.
 
@@ -159,48 +171,54 @@ Trang web điều khiển được lập trình bằng ngôn ngữ HTML/CSS/JS t
 │  - Té ngã:  ██████████████████████████████ 85%         │
 │  - Đi bộ:   ███ 10%                                    │
 │  - Đứng yên: █ 5%                                      │
+│  X:  0.03  Y: -0.12  Z:  0.98                          │
 ├────────────────────────────────────────────────────────┤
 │  LOG CẢNH BÁO TÉ NGÃ TẬP TRUNG                         │
-│  - [11:20:15] 🚨 CẢNH BÁO TÉ NGÃ #1 (conf=0.85, x2)   │
-│  - [11:20:21] 🚨 CẢNH BÁO TÉ NGÃ #2 (conf=0.91, x2)   │
+│  - [11:20:15] CẢNH BÁO TÉ NGÃ #1 (conf=0.85, x2)      │
+│  - [ESP-NOW] Đã phát gói tin (3x) tới Trạm chính       │
 └────────────────────────────────────────────────────────┘
 ```
 
 ### Các tính năng cao cấp trên giao diện Web UI:
-1.  **Đồng bộ hóa giao diện mặc định (Auto-inference Sync):** Mỗi khi tải hoặc tải lại trang (reload), giao diện web tự động kích hoạt chế độ **Suy luận (Inference)** và gửi tín hiệu đồng bộ xuống phần cứng giúp thiết bị luôn trong trạng thái sẵn sàng cứu hộ.
-2.  **Đồ thị thời gian thực:** Vẽ trực quan gia tốc tĩnh/động trên cả 3 trục $X, Y, Z$ cùng với nhịp phân tích của AI.
-3.  **Việt hóa 100% không Emoji:** Giao diện được thiết kế tối giản, sạch sẽ, sử dụng ngôn ngữ tiếng Việt kỹ thuật chuẩn mực, loại bỏ biểu tượng cảm xúc thừa để mang lại trải nghiệm công nghiệp nghiêm túc và chuyên nghiệp.
+1.  **Đồng bộ hóa giao diện mặc định (Auto-inference Sync):** Mỗi khi tải hoặc tải lại trang (reload), giao diện web tự động kích hoạt chế độ **Suy luận (Inference)**.
+2.  **Đồ thị thời gian thực:** Vẽ trực quan gia tốc tĩnh/động trên cả 3 trục X, Y, Z cùng với nhịp phân tích của AI.
+3.  **Việt hóa 100%:** Giao diện sử dụng ngôn ngữ tiếng Việt kỹ thuật chuẩn mực.
 
 ---
 
-## 🚧 CHƯƠNG VI: TRẠNG THÁI HIỆN TẠI & CÁC BƯỚC PHÁT TRIỂN TIẾP THEO
+## 🚦 CHƯƠNG VI: TRẠNG THÁI HIỆN TẠI & KẾ HOẠCH TIẾP THEO
 
-Dự án hiện tại đang ở giai đoạn **Báo cáo tiến độ** với các phần lõi đã hoàn thành độc lập trên từng board. Để đưa hệ thống vào vận hành thực tế toàn diện, các bước phát triển khẩn cấp tiếp theo bao gồm:
+### Đã hoàn thành
+| # | Hạng mục | Trạng thái |
+| :--- | :--- | :--- |
+| 1 | Firmware baseline `main.ino` (ENS160, AHT21, LM75, Buzzer, LED) | ✅ Hoàn thành |
+| 2 | `Rtos_main.ino` — FreeRTOS 4 tasks (SensorRead/AlertManager/BuzzerLED/Actuator) | ✅ Hoàn thành |
+| 3 | Thiết bị đeo `wearable_unified.ino` — Edge AI + Web UI tiếng Việt | ✅ Hoàn thành |
+| 4 | Tích hợp FreeRTOS vào Thiết bị đeo (`wearable_unified_rtos.ino`) — 3 tasks | ✅ Hoàn thành |
+| 5 | Bộ lọc chống báo giả (Debounce + Cooldown) | ✅ Hoàn thành |
+| 6 | **Tích hợp code ESP-NOW vào cả 2 board** | ✅ Code xong |
+| 7 | Cơ chế Latching 12s + Danger Overwrite trên Trạm chính | ✅ Code xong |
 
-1.  **Tích hợp hệ điều hành đa nhiệm RTOS vào Thiết bị đeo (Wearable Sub-Board):**
-    *   Chuyển đổi firmware đơn tuyến (`wearable_unified.ino`) sang cấu trúc đa nhiệm **FreeRTOS** tương tự Main Board.
-    *   Phân chia các tác vụ: Tác vụ đọc gia tốc 100Hz từ IMU, Tác vụ tính toán suy luận Edge AI, và Tác vụ xử lý giao tiếp mạng nhằm nâng cao độ mượt mà và tối ưu hóa năng lượng của thiết bị đeo.
-2.  **Kết nối liên board không dây bằng giao thức ESP-NOW:**
-    *   Thay thế các giao thức WiFi cồng kềnh bằng **ESP-NOW** (giao thức truyền tín hiệu tầm ngắn, độ trễ cực thấp dưới 10ms và không cần bộ định tuyến WiFi trung gian).
-    *   Thiết lập kênh liên lạc không dây bảo mật trực tiếp giữa **XIAO ESP32-S3** (thiết bị đeo) và **ESP32-S3 N16R8** (trạm chính) để truyền tải ngay lập tức gói tin cảnh báo té ngã (`ALERT_CRITICAL`).
-3.  **Hoàn thiện và tích hợp Cơ cấu chấp hành vật lý đầy đủ (Actuators):**
-    *   Tích hợp toàn diện các cơ cấu chấp hành tự động như: hệ thống cửa Servo thông gió điều khiển góc rộng, quạt hút khí độc công suất lớn (qua mạch đệm 2N2222), và còi hú công nghiệp công suất cao.
-    *   Đảm bảo khi nhận tín hiệu té ngã từ thiết bị đeo hoặc môi trường độc hại, hệ thống cơ khí sẽ phản ứng đồng bộ lập tức để bảo vệ an toàn tối đa cho người dùng.
+### Cần làm tiếp theo
+| # | Hạng mục | Ưu tiên |
+| :--- | :--- | :--- |
+| 🔴 | **[TEST] Nạp code và kiểm thử tích hợp ESP-NOW trên 2 thiết bị thực tế** — cập nhật `MAIN_BOARD_MAC` với địa chỉ MAC thật của Trạm chính, xác minh truyền nhận <10ms, test Latching 12s và Danger Overwrite | **KHẨN CẤP** |
+| 🟡 | Hoàn thiện và tích hợp Cơ cấu chấp hành vật lý đầy đủ (Actuators) — bật `ENABLE_SERVO=1`, kiểm thử servo vật lý | Cao |
+| 🟢 | Xây dựng Web UI tập trung giám sát toàn bộ hệ thống (cả môi trường + wearable) | Thấp |
 
 ---
 
 ## 📈 CHƯƠNG VII: KỊCH BẢN THUYẾT TRÌNH SLIDE GỢI Ý (PITCH DECK)
 
-Dưới đây là sơ đồ phân chia slide gợi ý để bạn đưa vào **NotebookLM** nhằm tạo ra một bài thuyết trình báo cáo tiến độ ấn tượng:
-
-*   **Slide 1: Tiêu đề & Giới thiệu:** Tên dự án, giải pháp kết hợp đột phá giữa Giám sát môi trường & Trí tuệ nhân tạo đeo thắt lưng (Edge AI) - Phiên bản Báo cáo Tiến độ.
-*   **Slide 2: Đặt vấn đề & Nhu cầu thực tế:** Nêu thực trạng tai nạn công nghiệp và gia đình; lý do tại sao các thiết bị cảm biến thông thường hay báo động giả.
-*   **Slide 3: Thiết kế Hệ thống kép (Dual-Board System):** Mô hình phối hợp giữa Main Board (ESP32-S3) nhận tín hiệu và Wearable Sub-board (XIAO) thu thập chuyển động.
-*   **Slide 4: Phần cứng & Pin Map:** Bảng thông số kỹ thuật tối tân (N16R8, I2C Bus, cơ cấu kích quạt ngược dòng bằng Diode Flyback).
-*   **Slide 5: Sức mạnh của FreeRTOS đa nhiệm:** Giải thích vai trò của 4 Task hoạt động song song trên 2 nhân CPU đảm bảo thời gian thực trên Main Board.
-*   **Slide 6: Công nghệ Hợp nhất cảm biến thông minh:** Thuật toán tự sửa lỗi chéo giữa AHT21 và LM75 bảo vệ hệ thống khỏi hỏng hóc vật lý.
-*   **Slide 7: Học Máy trên Thiết Bị Đeo:** Giới thiệu quá trình huấn luyện và nhúng mô hình từ Edge Impulse, cơ chế trượt cửa sổ 370ms.
-*   **Slide 8: Giải pháp Tăng cường dữ liệu (Data Augmentation):** Cách mô phỏng thể trạng bằng thuật toán nhân tỷ lệ 3x và gây nhiễu Jittering độc đáo.
-*   **Slide 9: Lớp Lá Chắn Chống Báo Giả:** Giải thích sâu về 2 thuật toán then chốt: Tích lũy xác nhận liên tiếp (`Confirm Slices`) và Thời gian chờ trượt đệm (`Cooldown`).
-*   **Slide 10: Giao diện vận hành Việt hóa:** Trình diễn bảng điều khiển Web nén PROGMEM chuyên nghiệp và khả năng tự động đồng bộ khi kết nối.
-*   **Slide 11: Lộ trình hoàn thiện tiếp theo (Next Steps):** Tích hợp FreeRTOS cho thiết bị đeo, kết nối không dây siêu tốc qua ESP-NOW, và lắp ráp hoàn thiện cơ cấu chấp hành vật lý đầy đủ.
+*   **Slide 1:** Tiêu đề & Giới thiệu — Tên dự án, giải pháp kết hợp giám sát môi trường & Edge AI đeo thắt lưng.
+*   **Slide 2:** Đặt vấn đề & Nhu cầu thực tế — Tai nạn công nghiệp và gia đình.
+*   **Slide 3:** Thiết kế Hệ thống kép (Dual-Board System) — Main Board (ESP32-S3) + Wearable Sub-board (XIAO).
+*   **Slide 4:** Phần cứng & Pin Map — Bảng thông số kỹ thuật.
+*   **Slide 5:** Sức mạnh FreeRTOS đa nhiệm — 4 Task song song 2 nhân CPU trên Main Board + 3 Task trên Wearable.
+*   **Slide 6:** Công nghệ Hợp nhất cảm biến thông minh — Cross-check AHT21 và LM75.
+*   **Slide 7:** Học Máy trên Thiết Bị Đeo — Edge Impulse, cửa sổ trượt 370ms.
+*   **Slide 8:** Giải pháp Tăng cường dữ liệu — Scaling 3x + Jittering.
+*   **Slide 9:** Lớp Lá Chắn Chống Báo Giả — Confirm Slices + Cooldown.
+*   **Slide 10:** Giao tiếp không dây ESP-NOW — Kênh 1, gói tin packed, 3x redundancy, Latching 12s.
+*   **Slide 11:** Giao diện vận hành Việt hóa — Web UI nén PROGMEM.
+*   **Slide 12:** Kết quả & Lộ trình — Code hoàn chỉnh, cần test thực tế 2 thiết bị.

@@ -1,27 +1,32 @@
-# Codeflow — Rtos_main.ino (FreeRTOS)
+# Codeflow — Rtos_main.ino & wearable_unified_rtos.ino (FreeRTOS + ESP-NOW)
 
-## Muc tieu
-Mo ta luong code chinh cua firmware FreeRTOS trong `src/main/Rtos_main.ino`.  
-File goc `main.ino` (single-loop, co Telegram + MQ2) van duoc giu nguyen lam tham chieu.
+## Trang Thai Du An: 2026-05-20
+
+| Board | File | Trang thai |
+|---|---|---|
+| Main Station (ESP32-S3 N16R8) | `src/Rtos_main/Rtos_main.ino` | Code xong, ESP-NOW RX tich hop |
+| Wearable (XIAO ESP32-S3) | `src/wearable/wearable_unified_rtos/wearable_unified_rtos.ino` | Code xong, ESP-NOW TX tich hop |
+| Ket noi 2 board qua ESP-NOW | — | **CODE XONG - CHUA TEST THUC TE** |
 
 ---
 
-## Cau truc tong quan
+## PHAN 1: TRAM CHINH — Rtos_main.ino
+
+### 1.1. Cau truc tong quan
 
 | Thanh phan | Mo ta |
 |---|---|
 | **Config** | Khai bao chan GPIO, nguong canh bao, timing, FreeRTOS stack sizes |
-| **Enums/Structs** | `SensorStatus`, `AlertLevel`, `SensorData` |
-| **Global state** | Queue, Mutex, shared volatile vars (`g_alertLevel`, `g_buzzerState`, `g_lastBuzzerToggle`) |
+| **Enums/Structs** | `SensorStatus`, `AlertLevel` (0-5), `SensorData`, `FallAlertPacket` |
+| **Global state** | Queue, Mutex, shared volatile vars (`g_alertLevel`, `g_buzzerState`, `g_lastBuzzerToggle`, `g_lastFallTime`) |
+| **ESP-NOW** | `OnDataRecv` callback, WiFi STA + Channel 1 lock |
 | **Helper functions** | `i2cPresent()`, `validateTemp()`, `evalAirQuality()`, `evalTemperature()` |
 | **Sensor functions** | `readAllSensors()`: Doc ENS160 + AHT21 + LM75, tinh `tempAvg`, danh gia trang thai |
 | **FreeRTOS Tasks** | 4 tasks doc lap chay song song |
-| **setup()** | Init GPIO/Servo/I2C/Sensor, tao Queue+Mutex, spawn 4 tasks |
+| **setup()** | Init GPIO/Servo/I2C/Sensor, WiFi STA + esp_now_init(), tao Queue+Mutex, spawn 4 tasks |
 | **loop()** | `vTaskDelay(portMAX_DELAY)` — nhuong hoan toan cho scheduler |
 
----
-
-## GPIO / Phan cung
+### 1.2. GPIO / Phan cung
 
 | Bien | Pin | Chuc nang |
 |---|---|---|
@@ -29,39 +34,50 @@ File goc `main.ino` (single-loop, co Telegram + MQ2) van duoc giu nguyen lam tha
 | `I2C_SCL_PIN` | GPIO 9 | I2C Clock (400 kHz) |
 | `BUZZER_PIN` | GPIO 2 | Coi bao (OUTPUT) |
 | `LED_PIN` | GPIO 4 | Den bao (OUTPUT) |
-| `SERVO_PIN` | GPIO 5 | Servo RC — PWM 50Hz, pulse 500–2500 µs |
+| `SERVO_PIN` | GPIO 5 | Servo RC — PWM 50Hz, pulse 500-2500 us |
 | `FAN_PIN` | GPIO 6 | Quat 12V qua NPN 2N2222: HIGH=ON, LOW=OFF |
 | `LM75_I2C_ADDR` | 0x48 | Dia chi I2C cua LM75 |
 
----
-
-## Nguong canh bao (Thresholds)
+### 1.3. Nguong canh bao (Thresholds)
 
 | Thong so | WARNING | DANGER |
 |---|---|---|
 | TVOC (ENS160) | >= 150 ppb | >= 500 ppb |
 | eCO2 (ENS160) | >= 800 ppm | >= 1500 ppm |
 | AQI (ENS160) | >= 3 | >= 4 |
-| Nhiet do (tempAvg) | >= 45.0 °C | >= 60.0 °C |
-| Nhiet do hop le | -40 °C den 125 °C | (ngoai dai → SENSOR_ERROR) |
-| Cross-check LM75 vs AHT21 | Chenh lech > 15 °C → dung LM75 lam gia tri chinh | |
+| Nhiet do (tempAvg) | >= 45.0 C | >= 60.0 C |
+| Nhiet do hop le | -40 C den 125 C | (ngoai dai -> SENSOR_ERROR) |
+| Cross-check LM75 vs AHT21 | Chenh lech > 15 C → dung LM75 lam gia tri chinh | |
 
----
+### 1.4. AlertLevel Enum (cap nhat co ALERT_FALL)
 
-## FreeRTOS Task Map
+| Gia tri | Ten | Mo ta |
+|---|---|---|
+| 0 | `ALERT_NONE` | Binh thuong |
+| 1 | `ALERT_INFO` | Thong tin (chua dung) |
+| 2 | `ALERT_WARNING` | Canh bao nhe: cam bien loi / nguong nhe |
+| 3 | `ALERT_DANGER` | Nguy hiem: khi doc / nhiet cao |
+| 4 | `ALERT_CRITICAL` | Nguy hiem toi do |
+| 5 | `ALERT_FALL` | **Nhan tin nha tu Wearable qua ESP-NOW** |
+
+### 1.5. FreeRTOS Task Map
 
 | Task | Core | Priority | Chu ky | Chuc nang |
 |---|---|---|---|---|
 | `TaskSensorRead` | Core 1 | 3 | 1000 ms | Doc ENS160 + AHT21 + LM75, gui vao `sensorQueue` |
-| `TaskAlertManager` | Core 1 | 4 | Block cho queue (timeout 2s) | Nhan `SensorData`, tinh `AlertLevel`, ghi `g_alertLevel` qua `alertMutex` |
+| `TaskAlertManager` | Core 1 | 4 | Block cho queue (timeout 2s) | Nhan `SensorData`, tinh `AlertLevel` moi, ghi `g_alertLevel` qua `alertMutex` voi logic Latching+Overwrite |
 | `TaskBuzzerLED` | Core 1 | 5 | 50 ms | Doc `g_alertLevel`, dieu khien Buzzer + LED theo pattern |
 | `TaskActuator` | Core 0 | 3 | 200 ms | Doc `g_alertLevel`, dieu khien Servo + Quat 12V |
 
----
-
-## Luong du lieu (Data Flow)
+### 1.6. Luong du lieu (Data Flow)
 
 ```
+[ESP-NOW OnDataRecv — ISR callback]
+    Nhan FallAlertPacket tu Wearable
+    alertType == 0xFA → g_alertLevel = ALERT_FALL, g_lastFallTime = millis()
+         |
+         | (alertMutex)
+         |
 [TaskSensorRead]  Core1 Pri3
     readAllSensors() moi 1000ms
     Neu queue day → xoa item cu nhat → gui item moi
@@ -70,10 +86,13 @@ File goc `main.ino` (single-loop, co Telegram + MQ2) van duoc giu nguyen lam tha
          v
 [TaskAlertManager]  Core1 Pri4
     Reads: sensorQueue (xQueueReceive, blocking 2s)
-    Tinh AlertLevel:
-      DANGER   ← airQualityStatus==DANGER hoac temperatureStatus==DANGER
-      WARNING  ← anySensorError (mat ket noi) HOAC airQuality/temp==WARNING
-      NONE     ← binh thuong
+    Tinh newLevel tu sensor:
+      DANGER/CRITICAL  ← cam bien khi doc / nhiet cao
+      WARNING          ← mat cam bien / nguong nhe
+      NONE             ← binh thuong
+    Logic ghi g_alertLevel (Latching + Danger Overwrite):
+      if (newLevel == DANGER || newLevel == CRITICAL) → g_alertLevel = newLevel (de len FALL)
+      else if (g_alertLevel != ALERT_FALL || millis()-g_lastFallTime >= 12000) → g_alertLevel = newLevel
     Writes: g_alertLevel (qua alertMutex)
          |
     +----+----+
@@ -86,177 +105,175 @@ Pattern buzzer/LED   Controls Servo + Fan
 (qua alertMutex)     (qua alertMutex)
 ```
 
----
-
-## Thu tu uu tien AlertLevel (trong TaskAlertManager)
-
-1. **ALERT_DANGER** — `airQualityStatus == SENSOR_DANGER` HOAC `temperatureStatus == SENSOR_DANGER`
-2. **ALERT_WARNING** — `anySensorError == true` (mat it nhat 1 cam bien)
-3. **ALERT_WARNING** — `airQualityStatus == SENSOR_WARNING` HOAC `temperatureStatus == SENSOR_WARNING`
-4. **ALERT_NONE** — moi thu binh thuong
-
-> **Luu y:** `ALERT_CRITICAL` chi duoc dung trong `TaskBuzzerLED` (buzzer lien tuc), KHONG phat ra tu `TaskAlertManager`.
-
----
-
-## Pattern Buzzer/LED (TaskBuzzerLED — 50ms tick)
+### 1.7. Pattern Buzzer/LED (TaskBuzzerLED — 50ms tick)
 
 | AlertLevel | LED | Buzzer |
 |---|---|---|
 | NONE / INFO | OFF | OFF |
+| FALL | Nhap nhay 5Hz: 100ms ON / 100ms OFF | BAT LIEN TUC (HIGH) |
 | WARNING | ON | Nhap nhay cham: 200 ms ON / 800 ms OFF |
 | DANGER | ON | Nhap nhay nhanh: 100 ms ON / 200 ms OFF |
 | CRITICAL | ON | Bat lien tuc (HIGH) |
 
-Bien trang thai buzzer (`g_buzzerState`, `g_lastBuzzerToggle`) la volatile global, duoc cap nhat truc tiep trong task.
+### 1.8. Logic Actuator (TaskActuator — 200ms tick)
 
----
-
-## Logic Actuator (TaskActuator — 200ms tick)
-
-| AlertLevel | Servo | Quat 12V (GPIO6 — NPN 2N2222) |
+| AlertLevel | Servo | Quat 12V (GPIO6) |
 |---|---|---|
-| NONE / INFO | 0° (dong) | OFF |
+| NONE / INFO / **FALL** | 0° (dong) | OFF — **Khong bat quat khi chi nhan tin nga** |
 | WARNING | 90° (mo mot phan) | ON |
-| DANGER | 180° (mo hoan toan) | ON |
-| CRITICAL | 0° (dong) | OFF |
+| DANGER / CRITICAL | 180° (mo hoan toan) | ON |
 
-- Servo chi ghi khi goc thay doi (tranh jitter).
-- Quat chi ghi khi trang thai thay doi.
+> **Danger Overwrite:** Neu DANGER/CRITICAL xuat hien trong luc ALERT_FALL → g_alertLevel bi de len DANGER/CRITICAL ngay → Servo 180°, Quat ON.
 
----
+### 1.9. Goi tin ESP-NOW (FallAlertPacket)
 
-## Logic Sensor Fusion (readAllSensors)
-
-```
-ENS160 → tvoc, eco2, aqi      (neu available)
-AHT21  → ahtTemp, humidity     (neu getEvent() thanh cong + validateTemp)
-LM75   → lm75Temp              (neu i2cPresent(0x48) + validateTemp)
-
-tempAvg:
-  ca hai hop le:
-    → tempAvg = (lm75 + aht) / 2
-    → neu |lm75 - aht| > 15°C → tempCrossCheckOk=false, dung lm75 lam chinh
-  chi lm75 hop le → tempAvg = lm75
-  chi aht21 hop le → tempAvg = aht
-  ca hai loi → tempAvg = NAN
-
-temperatureStatus:
-  uu tien tempAvg → lm75 → aht21 → NAN → SENSOR_ERROR
-
-anySensorError = true neu bat ky cam bien nao mat ket noi
-errorCount = tong so cam bien loi
+```cpp
+struct __attribute__((packed)) FallAlertPacket {
+  uint8_t  alertType;    // 0xFA — ma co dinh cho canh bao nga
+  uint32_t fallCount;    // so lan phat hien nga luy ke
+  float    confidence;   // xac suat tu AI (0.00-1.00)
+  uint32_t timestamp;    // millis() tai thoi diem phat hien
+};
+// Tong kich thuoc: 1 + 4 + 4 + 4 = 13 byte
 ```
 
 ---
 
-## Dong bo hoa (Synchronization)
+## PHAN 2: THIET BI DEO — wearable_unified_rtos.ino
+
+### 2.1. FreeRTOS Task Map (Wearable)
+
+| Task | Core | Priority | Stack | Chuc nang |
+|------|------|----------|-------|----------|
+| `TaskIMURead` | Core 1 | 5 (cao nhat) | 4096 B | Doc MPU6050 chinh xac moi 10ms (100Hz). Day `ImuData` vao `imuQueue`. Cap nhat web snapshot. |
+| `TaskEdgeAI` | Core 1 | 4 (cao) | 4096 B | Pop tu `imuQueue`, lap day sliding window, chay inference Edge Impulse, Debounce+Cooldown, **phat ESP-NOW** khi xac nhan nga. |
+| `TaskNetworkWeb` | Core 0 | 3 (trung binh) | 6144 B | Xu ly `server.handleClient()`, INGESTION state machine, HTTPS Upload len Edge Impulse Studio. |
+
+### 2.2. FreeRTOS Primitives
+
+| Primitive | Loai | Bao ve |
+|-----------|-------|--------|
+| `imuQueue` | `QueueHandle_t` (30 o, sizeof `ImuData`) | Truyen du lieu cam bien tu `TaskIMURead` sang `TaskEdgeAI` va `TaskNetworkWeb` (khi COLLECTING). |
+| `stateMutex` | `SemaphoreHandle_t` (mutex) | Bao ve `operationMode` va `state` khi duoc doc/ghi dong thoi tu Web handler va tasks. |
+
+### 2.3. Cau hinh va Hang so chinh (ei_config.h)
+
+- **Tan so lay mau:** 100 Hz (chu ky 10ms)
+- **Kich thuoc mau:** 300 mau (3 giay du lieu lien tuc)
+- **Thang do cam bien:** Gia toc +/-8g (ACCEL_SCALE=4096.0f), Van toc goc +/-500 deg/s (GYRO_SCALE=65.5f)
+- **Bo loc chong bao gia:**
+  - `FALL_ALERT_THRESHOLD = 0.85f`
+  - `FALL_CONFIRM_SLICES = 3`
+  - `FALL_COOLDOWN_MS = 6000`
+
+### 2.4. Luong ESP-NOW TX trong TaskEdgeAI
+
+```
+[TaskEdgeAI — Core1 Pri4]
+  Nhan ImuData tu imuQueue (blocking 20ms)
+  → Loi → continue
+  
+  Ghi vao sliding window inferBuf
+  Khi du SLICE_SIZE mau:
+    memmove dich du lieu cu
+    neu inferBufFull:
+      run_classifier() → fall / idle / walk scores
+      
+      [Debounce + Cooldown]
+      fall >= FALL_ALERT_THRESHOLD (0.85)?
+        fallConfirm++
+        fallConfirm >= FALL_CONFIRM_SLICES (2)
+        && millis() - lastAlertMs >= FALL_COOLDOWN_MS (6000)?
+          → fallConfirm = 0, lastAlertMs = millis()
+          → fall_count++
+          → In log CANH BAO TE NGA
+          
+          [PHAT ESP-NOW — 3x]
+          FallAlertPacket packet {0xFA, fall_count, confidence, millis()}
+          for i in 0..2:
+            esp_now_send(MAIN_BOARD_MAC, &packet, sizeof(packet))
+            vTaskDelay(5ms)
+          → logPrintf [ESP-NOW] Da phat 3x
+          
+          → ledOn()
+```
+
+### 2.5. Wi-Fi va ESP-NOW Setup (Wearable setup())
+
+```
+WiFi.mode(WIFI_AP_STA)
+WiFi.softAP("Wearable_AP", "12345678", channel=1)   // Khoa kenh 1 cho ESP-NOW
+WiFi.begin(EI_WIFI_SSID, EI_WIFI_PASSWORD)           // Ket noi router qua STA
+initEspNow():
+  esp_now_init()
+  esp_now_add_peer(MAIN_BOARD_MAC, channel=1)
+```
+
+### 2.6. Wi-Fi va ESP-NOW Setup (Main Station setup())
+
+```
+WiFi.mode(WIFI_STA)
+WiFi.disconnect()
+esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE)        // Ep kenh 1 dong bo voi Wearable
+esp_wifi_get_mac(WIFI_IF_STA, mac) → In ra Serial     // Hien MAC de nguoi dung copy vao MAIN_BOARD_MAC
+esp_now_init()
+esp_now_register_recv_cb(OnDataRecv)
+```
+
+### 2.7. Danh sach API Web Server cua Thiet bi deo
+
+| Endpoint | Method | Chuc nang |
+|---|---|---|
+| `/` | GET | Tra ve trang Web dieu khien Viet hoa nen PROGMEM tu `html_page.h` |
+| `/status` | GET | JSON trang thai hoat dong, thong so IMU, so lan nga (`fall_count`) |
+| `/infer-status` | GET | JSON ket qua suy luan hien tai (fall/idle/walk + XYZ) |
+| `/setmode?mode=...` | GET | Thay doi che do (`inference` hoac `ingestion`) |
+| `/calibrate` | GET | Hieu chuan lay offset tinh MPU6050 |
+| `/trigger` | GET | Bat dau thu mau mot bat thu cong |
+| `/autorun?count=N` | GET | Bat dau N bat thu tu dong |
+| `/stoprun` | GET | Dung auto-run |
+| `/setlabel?label=...` | GET | Doi nhan du lieu (fall/idle/walk) |
+| `/setaugment` | GET | Bat/tat Scale 3x augmentation |
+| `/setjitter` | GET | Bat/tat Jitter noise augmentation |
+| `/upload-manual` | POST | Upload thu cong CSV data len Edge Impulse |
+| `/log` | GET | 30 dong log gan nhat (JSON) |
+| `/reset-alerts` | GET | Reset bo dem fall_count |
+
+---
+
+## PHAN 3: DONG BO HOA TONG THE (System Synchronization)
 
 | Primitive | Loai | Bao ve |
 |---|---|---|
-| `sensorQueue` | `QueueHandle_t` (len=5, sizeof SensorData) | Truyen `SensorData` tu TaskSensorRead sang TaskAlertManager |
-| `alertMutex` | `SemaphoreHandle_t` (mutex) | Bao ve `g_alertLevel` khi doc/ghi tu TaskAlertManager / TaskBuzzerLED / TaskActuator |
-
-- Neu queue day, item cu nhat bi xoa de nhuong cho item moi nhat (`xQueueReceive` + `xQueueSend`).
-- TaskAlertManager take mutex timeout 50ms khi ghi `g_alertLevel`.
-- TaskBuzzerLED / TaskActuator take mutex timeout 10ms khi doc `g_alertLevel`.
+| `sensorQueue` (Main) | QueueHandle_t (len=5) | Truyen SensorData tu TaskSensorRead sang TaskAlertManager |
+| `alertMutex` (Main) | SemaphoreHandle_t (mutex) | Bao ve g_alertLevel, g_lastFallTime khi doc/ghi tu ESP-NOW callback / TaskAlertManager / TaskBuzzerLED / TaskActuator |
+| `imuQueue` (Wearable) | QueueHandle_t (len=30) | Truyen ImuData tu TaskIMURead sang TaskEdgeAI / TaskNetworkWeb (COLLECTING) |
+| `stateMutex` (Wearable) | SemaphoreHandle_t (mutex) | Bao ve operationMode va state |
 
 ---
 
-## Mermaid overview (FreeRTOS)
+## PHAN 4: TICH HOP LIEN THIET BI (Inter-device Integration)
 
-```mermaid
-flowchart TD
-    A[Khoi dong ESP32-S3] --> B[setup]
-    B --> C[Init GPIO: Buzzer LED Fan\nServo 0deg / 50Hz / 500-2500us]
-    C --> D[Init I2C SDA=8 SCL=9 400kHz\nENS160 AHT21 LM75 0x48]
-    D --> E[Tao sensorQueue len=5\nTao alertMutex]
-    E --> F[Spawn 4 FreeRTOS Tasks]
-    F --> G[loop: vTaskDelay portMAX_DELAY]
+| Tham so | Gia tri |
+|---|---|
+| Giao thuc | ESP-NOW Unicast |
+| Kenh Wi-Fi | Kenh 1 (ca hai board) |
+| Wearable Wi-Fi mode | WIFI_AP_STA — SoftAP "Wearable_AP" khoa kenh 1 |
+| Main Station Wi-Fi mode | WIFI_STA — esp_wifi_set_channel(1) |
+| Do tre truyen nhan | < 10ms (ly thuyet) |
+| Co che chong mat goi | Phat 3x lien tiep, gian cach 5ms |
+| Latching ALERT_FALL | 12 giay tu goi tin cuoi cung |
+| Danger Overwrite | DANGER/CRITICAL de len FALL ngay lap tuc |
 
-    subgraph Core1["Core 1"]
-        T1["TaskSensorRead Pri3\nDoc sensor moi 1s\nreadAllSensors()\ngui vao sensorQueue"]
-        T2["TaskAlertManager Pri4\nxQueueReceive block 2s\nTinh AlertLevel\nGhi g_alertLevel qua alertMutex"]
-        T3["TaskBuzzerLED Pri5\nDoc g_alertLevel moi 50ms\nDieu khien Buzzer + LED"]
-    end
+> **TRANG THAI:** Code da tich hop hoan chinh. **CHUA TIEN HANH TEST THUC TE TREN 2 THIET BI.**
 
-    subgraph Core0["Core 0"]
-        T4["TaskActuator Pri3\nDoc g_alertLevel moi 200ms\nDieu khien Servo + Fan"]
-    end
-
-    T1 -- sensorQueue --> T2
-    T2 -- "alertMutex / g_alertLevel" --> T3
-    T2 -- "alertMutex / g_alertLevel" --> T4
-```
-
----
-
-## Codeflow — wearable_unified.ino (Wearable Board)
-
-Phân hệ thiết bị đeo thắt lưng được lập trình đa nhiệm với FreeRTOS, phân bổ tải xử lý trên cả hai nhân của XIAO ESP32-S3.
-
-### 0. FreeRTOS Task Map
-
-| Task | Core | Priority | Stack | Chức năng |
-|------|------|----------|-------|----------|
-| `TaskIMURead` | Core 1 | **5** (cao nhất) | 3072 B | Đọc MPU6050 chính xác mỗi 10ms (100Hz). Đẩy `ImuData` vào `imuQueue`. Cập nhật web snapshot. |
-| `TaskEdgeAI` | Core 1 | **4** (cao) | 4096 B | Pop từ `imuQueue`, lấp đầy sliding window, chạy inference Edge Impulse, Debounce + Cooldown, điều khiển LED. |
-| `TaskNetworkWeb` | Core 0 | **3** (trung bình) | 6144 B | Xử lý `server.handleClient()`, INGESTION state machine, HTTPS Upload lên Edge Impulse Studio. |
-
-### 0.1. FreeRTOS Primitives
-
-| Primitive | Loại | Bảo vệ |
-|-----------|-------|--------|
-| `imuQueue` | `QueueHandle_t` (30 ô, sizeof `ImuData`) | Truyền dữ liệu cảm biến từ `TaskIMURead` sang `TaskEdgeAI` và `TaskNetworkWeb` (khi COLLECTING). |
-| `stateMutex` | `SemaphoreHandle_t` (mutex) | Bảo vệ `operationMode` và `state` khi được đọc/ghi đồng thời từ Web handler và tasks. |
-
-### 1. Cấu hình và Hằng số chính (ei_config.h)
-- **Tần số lấy mẫu:** `100 Hz` (chu kỳ 10ms).
-- **Kích thước mẫu:** `300 mẫu` (3 giây dữ liệu liên tục).
-- **Thang đo cảm biến:** Gia tốc `±8g` (`ACCEL_SCALE = 4096.0f`), Vận tốc góc `±500 deg/s` (`GYRO_SCALE = 65.5f`).
-- **Bộ lọc chống báo giả:**
-  - `FALL_ALERT_THRESHOLD = 0.85f` (Ngưỡng xác suất kích hoạt).
-  - `FALL_CONFIRM_SLICES = 2` (Số lần xác nhận liên tục để lọc nhiễu).
-  - `FALL_COOLDOWN_MS = 6000` (Thời gian khóa còi/đèn sau khi ngã).
-
-### 2. Quản lý Chế độ Hoạt động (Operation Mode State Machine)
-- Chế độ mặc định khi khởi động hoặc tải lại trang web là **SUY LUẬN (INFERENCE)** để luôn đặt sự an toàn lên hàng đầu.
-- Web UI gửi yêu cầu `/setmode?mode=ingestion` để chuyển sang chế độ **THU MẪU (INGESTION)** khi cần huấn luyện mô hình.
-
-### 3. Quy trình Xử lý Dữ liệu trong Chế độ Suy Luận (Inference Flow)
-1. **Đọc dữ liệu MPU6050:** Lấy gia tốc và vận tốc góc thô.
-2. **Xoay trục & Hiệu chỉnh:** 
-   - Áp dụng ma trận xoay đồng bộ: Trục Z thành Hướng tới trước (Forward), Trục X thành Hướng bên trái (Left), Trục Y thành Hướng đi lên (Up).
-   - Trừ đi sai số hiệu chuẩn tĩnh (`off_aX`, `off_aY`, `off_aZ`, `off_gX`, `off_gY`, `off_gZ`) được tính toán khi người dùng nhấn nút Calibrate trên giao diện.
-3. **Đẩy bộ đệm trượt (Sliding Window):**
-   - Đẩy 6 trục vào bộ đệm `inferBuf` tại vị trí hiện tại.
-   - Khi lấp đầy một phân mảnh (slice), thực hiện dịch chuyển vùng nhớ bằng `memmove` để loại bỏ dữ liệu cũ nhất và nhường chỗ cho dữ liệu mới.
-4. **Suy luận phân loại AI:**
-   - Gọi thư viện Edge Impulse `run_classifier()` chạy trực tiếp trên chip.
-   - Trích xuất xác suất của 3 nhãn: `fall`, `walk`, `idle`.
-5. **Áp dụng Bộ lọc Debounce & Cooldown:**
-    - Nếu `fall >= 0.85` liên tiếp 2 lần và ngoài chu kỳ khóa 6s: Đóng dấu cảnh báo té ngã thật (`fall_count++`), bật LED sáng liên tục, và in log hệ thống.
-   - Nếu không đủ điều kiện: Nhấp nháy LED cực nhanh cảnh báo nhẹ hoặc tắt LED tùy thuộc vào các nhãn chuyển động thường.
-
-### 4. Quy trình Thu Mẫu và Data Augmentation (Ingestion Flow)
-1. **Thu thập dữ liệu:** Lưu trữ 300 mẫu liên tục vào mảng đệm động trong 3 giây ở tần số 100Hz.
-2. **On-Device Data Augmentation (Tăng cường dữ liệu):**
-   - **Tỉ lệ hóa (Scaling - 3x):** Tạo ra 3 bộ dữ liệu: Gốc (x1.0), Nhẹ (x0.94) và Mạnh (x1.06) đại diện cho các thể trạng người dùng khác nhau.
-   - **Gây nhiễu Gauss (Jittering):** Tự động thêm nhiễu trắng nhỏ vào các trục để tăng độ bền vững của mô hình.
-3. **Gửi HTTP Secure:** Đóng gói JSON theo chuẩn Edge Impulse nén payload và upload trực tiếp lên Ingestion API của Edge Impulse Studio thông qua khóa API được cấu hình.
-
-### 5. Danh sách các API Web Server của Thiết bị đeo
-- `GET /` : Trả về trang Web điều khiển Việt hóa nén `PROGMEM` từ `html_page.h`.
-- `GET /status` : Trả về chuỗi JSON chứa trạng thái hoạt động, thông số IMU thời gian thực, nhiệt độ và tổng số lần ngã (`fall_count`).
-- `GET /setmode?mode=...` : Thay đổi chế độ (`inference` hoặc `ingestion`).
-- `GET /calibrate` : Thực hiện hiệu chuẩn lấy offset tĩnh cho cảm biến MPU6050.
-- `GET /ingest_start?label=...` : Bắt đầu chu trình thu mẫu với nhãn tương ứng.
-- `GET /ingest_status` : Trả về tiến độ thu thập mẫu và trạng thái tải lên Edge Impulse.
-
----
-
-## Ghi chú tích hợp liên thiết bị (Inter-device Integration Plan)
-
-- Giao thức tích hợp đã chốt: **ESP-NOW Unicast** trên **Kênh Wi-Fi 1** đồng kênh với SoftAP của thiết bị đeo.
-- `TaskEdgeAI` sẽ được mở rộng gửi gói tin `FallAlertPacket` qua ESP-NOW đến địa chỉ `MAIN_BOARD_MAC` của Trạm chính khi xác nhận té ngã.
-- Trạm chính đăng ký callback ESP-NOW nhận gói tin và nâng `g_alertLevel = ALERT_FALL` qua `alertMutex`.
+### Huong dan test (Verification Steps)
+1. Nap `Rtos_main.ino` cho Tram chinh → mo Serial Monitor → copy dia chi MAC STA in ra
+2. Dan MAC vao `MAIN_BOARD_MAC[]` trong `wearable_unified_rtos.ino` (dong ~60)
+3. Nap `wearable_unified_rtos.ino` cho XIAO ESP32-S3
+4. Kich hoat che do INFERENCE → gia lap nga → kiem tra:
+   - Wearable in: `[ESP-NOW] Da phat goi tin canh bao te nga toi Tram chinh (3x).`
+   - Main in: `[ESP-NOW] Nhan goi canh bao NGA! Luy ke: 1 | Confidence: 0.XX`
+   - Coi Tram chinh keu lien tuc, LED nhap nhay 5Hz
+5. Doi 12 giay → kiem tra coi/LED tu tat
+6. Ket hop voi khi doc (thoi ENS160) → kiem tra Danger Overwrite
