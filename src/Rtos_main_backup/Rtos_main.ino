@@ -46,10 +46,6 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
-#include <WiFi.h>
-#include <esp_now.h>
-#include <esp_wifi.h>
-
 // ╔══════════════════════════════════════════════════════════════╗
 // ║                    CẤU HÌNH (CONFIG)                         ║
 // ╚══════════════════════════════════════════════════════════════╝
@@ -119,8 +115,7 @@ enum AlertLevel {
   ALERT_INFO,
   ALERT_WARNING,
   ALERT_DANGER,
-  ALERT_CRITICAL,
-  ALERT_FALL = 5
+  ALERT_CRITICAL
 };
 
 struct SensorData {
@@ -164,35 +159,6 @@ static SemaphoreHandle_t alertMutex = nullptr;
 static volatile AlertLevel    g_alertLevel       = ALERT_NONE;
 static volatile bool          g_buzzerState      = false;
 static volatile unsigned long g_lastBuzzerToggle = 0;
-static volatile unsigned long g_lastFallTime     = 0;
-
-struct __attribute__((packed)) FallAlertPacket {
-  uint8_t alertType;      // Mã loại cảnh báo, cố định 0xFA đối với ngã
-  uint32_t fallCount;     // Số lần phát hiện té ngã lũy kế từ thiết bị đeo
-  float confidence;       // Độ tin cậy/xác suất nhận diện từ mô hình AI (0.00 - 1.00)
-  uint32_t timestamp;     // Thời gian phát hiện (ms) trên thiết bị đeo
-};
-
-#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
-void OnDataRecv(const esp_now_recv_info_t *recvInfo, const uint8_t *incomingData, int len) {
-  const uint8_t *mac_addr = recvInfo->src_addr;
-#else
-void OnDataRecv(const uint8_t *mac_addr, const uint8_t *incomingData, int len) {
-#endif
-  if (len == sizeof(FallAlertPacket)) {
-    FallAlertPacket packet;
-    memcpy(&packet, incomingData, sizeof(packet));
-    if (packet.alertType == 0xFA) {
-      Serial.printf("[ESP-NOW] Nhận gói cảnh báo NGÃ! Lũy kế: %u | Confidence: %.2f\n",
-                    packet.fallCount, packet.confidence);
-      if (xSemaphoreTake(alertMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-        g_alertLevel = ALERT_FALL;
-        g_lastFallTime = millis();
-        xSemaphoreGive(alertMutex);
-      }
-    }
-  }
-}
 
 // ╔══════════════════════════════════════════════════════════════╗
 // ║                    HELPER FUNCTIONS                          ║
@@ -369,15 +335,7 @@ void TaskAlertManager(void * /*pvParam*/) {
 
     // Ghi AlertLevel mới (mutex bảo vệ)
     if (xSemaphoreTake(alertMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-      // 1. Cảnh báo nguy hiểm từ cảm biến (DANGER/CRITICAL) luôn được quyền đè lên ALERT_FALL để bảo vệ tối thượng
-      if (newLevel == ALERT_DANGER || newLevel == ALERT_CRITICAL) {
-        g_alertLevel = newLevel;
-      } else {
-        // 2. Nếu không có DANGER/CRITICAL, chỉ cập nhật trạng thái nhẹ hơn nếu không ở ALERT_FALL hoặc cảnh báo ngã đã hết hạn (12 giây)
-        if (g_alertLevel != ALERT_FALL || (millis() - g_lastFallTime >= 12000)) {
-          g_alertLevel = newLevel;
-        }
-      }
+      g_alertLevel = newLevel;
       xSemaphoreGive(alertMutex);
     }
 
@@ -412,7 +370,6 @@ void TaskActuator(void * /*pvParam*/) {
     switch (lvl) {
     case ALERT_NONE:
     case ALERT_INFO:
-    case ALERT_FALL: // Khóa cứng Servo ở 0 độ và Quạt tắt khi có cảnh báo ngã
       targetAngle = SERVO_ANGLE_NORMAL;
       fanOn = false;
       break;
@@ -472,18 +429,6 @@ void TaskBuzzerLED(void * /*pvParam*/) {
       digitalWrite(BUZZER_PIN, LOW);
       digitalWrite(LED_PIN, LOW);
       g_buzzerState = false;
-      break;
-
-    case ALERT_FALL:
-      // Còi kêu liên tục, LED chớp tắt liên tục cực nhanh (100ms ON / 100ms OFF)
-      digitalWrite(BUZZER_PIN, HIGH);
-      g_buzzerState = true;
-      if (now - g_lastBuzzerToggle >= 100) {
-        static bool fallLedState = false;
-        fallLedState = !fallLedState;
-        digitalWrite(LED_PIN, fallLedState ? HIGH : LOW);
-        g_lastBuzzerToggle = now;
-      }
       break;
 
     case ALERT_WARNING:
@@ -609,25 +554,6 @@ void setup() {
   Serial.println("[INIT] Servo DISABLED (ENABLE_SERVO=0)"); Serial.flush();
 #endif
 #endif
-
-  // ── ESP-NOW & Wi-Fi Setup ─────────────────────────────────────
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  
-  // Ép phần cứng chạy Kênh 1 đồng bộ với Thiết bị đeo
-  esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-
-  uint8_t mac[6];
-  esp_wifi_get_mac(WIFI_IF_STA, mac);
-  Serial.printf("[WIFI] Địa chỉ MAC STA của Trạm chính: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
-  if (esp_now_init() == ESP_OK) {
-    Serial.println("[ESP-NOW] Khởi tạo thành công!");
-    esp_now_register_recv_cb(OnDataRecv);
-  } else {
-    Serial.println("[ESP-NOW] Khởi tạo THẤT BẠI!");
-  }
 
   // FreeRTOS primitives
   sensorQueue = xQueueCreate(SENSOR_QUEUE_LEN, sizeof(SensorData));
