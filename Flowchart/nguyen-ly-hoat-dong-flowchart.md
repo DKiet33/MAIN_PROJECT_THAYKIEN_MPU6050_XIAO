@@ -1,6 +1,6 @@
 # Nguyen Ly Hoat Dong — He Thong Giam Sat Moi Truong & Phat Hien Te Nga
 
-Cap nhat: 2026-05-27 | Trang thai: Da test ESP-NOW thanh cong + **Servo SG90 dieu khien vat ly thanh cong (LEDC 14-bit)**
+Cap nhat: 2026-05-27 | Trang thai: Da test ESP-NOW thanh cong + **test thành công các thiết bị Quạt / LED / Buzzer / Servo**
 
 ---
 
@@ -268,6 +268,6 @@ flowchart TD
 | 2026-05-20 | Tich hop FreeRTOS vao Wearable (3 tasks), sua loi I2C co lap Core1 |
 | 2026-05-20 | **Tich hop ESP-NOW TX/RX ca 2 board, ALERT_FALL=5, Latching 12s, Danger Overwrite** |
 | 2026-05-27 | **Da test thuc te thanh cong ESP-NOW giua 2 thiet bi, he thong phan hoi nhip nhang va tuc thi (<10ms)** |
-| 2026-05-27 | **Da test thanh cong Servo SG90 dieu khien vat ly** — Arduino Native LEDC 14-bit, GPIO5, 0°/90°/180° phan hoi chinh xac. |
+| 2026-05-27 | **test thành công các thiết bị Quạt / LED / Buzzer / Servo** |
 | — | **TODO: Xay dung Web UI cho N16R8 va hop nhat 2 Web UI lai lam mot** |
 

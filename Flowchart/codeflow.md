@@ -4,10 +4,10 @@
 
 | Board | File | Trang thai |
 |---|---|---|
-| Main Station (ESP32-S3 N16R8) | `src/Rtos_main/Rtos_main.ino` | Code xong, ESP-NOW RX tich hop, **Servo test thanh cong** |
+| Main Station (ESP32-S3 N16R8) | `src/Rtos_main/Rtos_main.ino` | Code xong, ESP-NOW RX tich hop, **test thành công các thiết bị Quạt / LED / Buzzer / Servo** |
 | Wearable (XIAO ESP32-S3) | `src/wearable/wearable_unified_rtos/wearable_unified_rtos.ino` | Code xong, ESP-NOW TX tich hop |
 | Ket noi 2 board qua ESP-NOW | — | **DA TEST THUC TE THANH CONG** |
-| **Servo SG90 dieu khien vat ly** | GPIO5, Arduino Native LEDC 14-bit | **DA TEST THANH CONG (2026-05-27)** |
+| **Cac thiet bi ngoai vi** | GPIO5, GPIO6, LED, Buzzer | **test thành công các thiết bị Quạt / LED / Buzzer / Servo** |
 
 ---
 
@@ -277,7 +277,7 @@ esp_now_register_recv_cb(OnDataRecv)
 - **Ket qua ESP-NOW:** Da kiem thu thuc te thanh cong tren 2 bo mach (XIAO ESP32-S3 va ESP32-S3 N16R8).
 - **Phan hoi tu thiet bi:** Khi gia lap te nga, Wearable phat 3x ESP-NOW, Trạm chinh nhan tuc thi (<10ms), coi keu va LED nhay 5Hz chinh xac.
 - **Kiem thu latching va overwrite:** Latching 12 giay hoat dong tot, va khi thoi khi doc (ENS160) len muc DANGER, coi va LED da ngay lap tuc kich hoat Danger Overwrite bat servo/quat bat ky luc nao.
-- **Ket qua Servo SG90 (2026-05-27):** Da kiem thu dieu khien servo vat ly thanh cong voi LEDC API 14-bit. Servo phan hoi chinh xac o 0°/90°/180°.
+- **Ket qua kiem thu (2026-05-27):** test thành công các thiết bị Quạt / LED / Buzzer / Servo.
 
 ### Huong dan test (Verification Steps)
 1. Nap `Rtos_main.ino` cho Tram chinh → mo Serial Monitor → copy dia chi MAC STA in ra.

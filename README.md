@@ -1,3 +1,7 @@
+---
+trigger: manual
+---
+
 # HỆ THỐNG GIÁM SÁT MÔI TRƯỜNG & PHÁT HIỆN TÉ NGÃ THÔNG MINH (EDGE AI)
 ## BÁO CÁO TIẾN ĐỘ DỰ ÁN (WORK IN PROGRESS) - TÀI LIỆU PHỤC VỤ THIẾT KẾ SLIDE TRÊN NOTEBOOKLM
 
