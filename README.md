@@ -52,7 +52,7 @@ flowchart TD
 | :--- | :--- | :--- |
 | **Buzzer** | GPIO2 | Còi phát tín hiệu âm thanh cảnh báo |
 | **Status LED** | GPIO4 | Đèn chỉ thị nhịp trạng thái |
-| **Servo SG90** | GPIO5 | Động cơ mở van thông khí (PWM 50Hz, 500-2500µs) — LEDC Arduino Native API 14-bit |
+| **Servo SG90** | GPIO5 | Động cơ mở van thông khí (PWM 50Hz, 500-2500µs)|
 | **Fan 12V** | GPIO6 | Quạt hút khí độc (Được đệm qua Transistor NPN 2N2222) |
 | **I2C SDA** | GPIO8 | Chân truyền dữ liệu cảm biến I2C |
 | **I2C SCL** | GPIO9 | Chân nhịp xung clock cảm biến I2C (400 kHz) |
@@ -178,8 +178,7 @@ Trang web điều khiển được lập trình bằng ngôn ngữ HTML/CSS/JS t
 | 6 | **Tích hợp code ESP-NOW vào cả 2 board** | ✅ Hoàn thành |
 | 7 | Cơ chế Latching 12s + Danger Overwrite trên Trạm chính | ✅ Hoàn thành |
 | 8 | **Kiểm thử tích hợp ESP-NOW thực tế trên 2 thiết bị** | ✅ Đã test thành công |
-| 9 | **Servo SG90 — Kiểm thử điều khiển vật lý** (`ENABLE_SERVO=1`) bằng Arduino Native LEDC API | ✅ Đã test thành công |
-| 10 | **Bài học kỹ thuật Servo**: Giải quyết toàn bộ chuỗi lỗi (hang ESP32Servo → ESP-IDF LEDC xung đột GPIO Matrix → giới hạn 14-bit ESP32-S3) | ✅ Tài liệu hóa đầy đủ |
+| 9 | **Kiểm thử các thiết bị Quạt / Servo / Đèn LED / Buzzer** | ✅ Đã test thành công |
 
 ### Cần làm tiếp theo
 | # | Hạng mục | Ưu tiên |
