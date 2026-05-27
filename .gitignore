@@ -1,0 +1,5 @@
+.src/main
+.src/main_backup
+.src/Rtos_main_backup
+.wearable/backup
+.wearable/wearable_unified_rtos_backup

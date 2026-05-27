@@ -1,6 +1,6 @@
 # Nguyen Ly Hoat Dong — He Thong Giam Sat Moi Truong & Phat Hien Te Nga
 
-Cap nhat: 2026-05-20 | Trang thai: ESP-NOW code xong, chua test thuc te
+Cap nhat: 2026-05-27 | Trang thai: Da test ESP-NOW thanh cong + **Servo SG90 dieu khien vat ly thanh cong (LEDC 14-bit)**
 
 ---
 
@@ -17,7 +17,7 @@ flowchart LR
         W1 -->|imuQueue| W3
     end
 
-    ESPNOW{{"ESP-NOW\n< 10ms\n[CHUA TEST]"}}
+    ESPNOW{{"ESP-NOW\n< 10ms\n[DA TEST THANH CONG]"}}
 
     subgraph M["ESP32-S3 N16R8 (Main Station)"]
         ESPNOW -->|"WIFI_STA\nKenh 1\nOnDataRecv"| M1[alertMutex\ng_alertLevel=ALERT_FALL]
@@ -264,7 +264,10 @@ flowchart TD
 |---|---|
 | 2026-04-22 | Khoi tao he thong, firmware baseline main.ino |
 | 2026-05-15 | Tao Rtos_main.ino — FreeRTOS 4 tasks, bo Telegram/MQ2, them Servo+Fan |
-| 2026-05-18 | Hoan thien fall detection XIAO (Edge Impulse + Web UI tieng Viet + Debounce/Cooldown) |
+| 2026-05-18 | Hoan thien fall detection XIAO (Edge Impulse + Web UI + Debounce/Cooldown) |
 | 2026-05-20 | Tich hop FreeRTOS vao Wearable (3 tasks), sua loi I2C co lap Core1 |
 | 2026-05-20 | **Tich hop ESP-NOW TX/RX ca 2 board, ALERT_FALL=5, Latching 12s, Danger Overwrite** |
-| — | **TODO: Test thuc te ESP-NOW tren 2 thiet bi** |
+| 2026-05-27 | **Da test thuc te thanh cong ESP-NOW giua 2 thiet bi, he thong phan hoi nhip nhang va tuc thi (<10ms)** |
+| 2026-05-27 | **Da test thanh cong Servo SG90 dieu khien vat ly** — Arduino Native LEDC 14-bit, GPIO5, 0°/90°/180° phan hoi chinh xac. |
+| — | **TODO: Xay dung Web UI cho N16R8 va hop nhat 2 Web UI lai lam mot** |
+

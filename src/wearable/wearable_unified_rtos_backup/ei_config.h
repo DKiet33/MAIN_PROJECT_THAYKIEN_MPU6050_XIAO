@@ -9,8 +9,8 @@
 // ════════════════════════════════════════════════════════════════
 
 // ══════ WiFi ══════
-#define EI_WIFI_SSID "PHAM HIEN"
-#define EI_WIFI_PASSWORD "0353950060"
+#define EI_WIFI_SSID "PTIT.HCM_SV"
+#define EI_WIFI_PASSWORD ""
 
 // ══════ Edge Impulse — Ingestion API ══════
 // Lấy API Key tại: Studio → Project → Dashboard → Keys → API Key

@@ -21,7 +21,7 @@ flowchart TD
     subgraph Wearable["1. KHỐI ĐEO THẮT LƯNG (Wearable Sub-Board)"]
         A[XIAO ESP32-S3] <--> B[MPU6050 IMU]
         A --> C[Edge Impulse AI Model]
-        C --> D["Web UI Tiếng Việt (PROGMEM)"]
+        C --> D["Web UI (PROGMEM)"]
         C -->|"ALERT_FALL packet\n3x ESP-NOW @ Kênh 1"| E[["ESP-NOW TX"]]
     end
 
@@ -32,7 +32,7 @@ flowchart TD
         G --> J[Alerts: Còi Buzzer + LED Trạng thái]
     end
 
-    E -. "ESP-NOW Unicast\nKênh Wi-Fi 1 (<10ms)\n[CODE XONG - CHƯA TEST]" .-> F
+    E -. "ESP-NOW Unicast\nKênh Wi-Fi 1 (<10ms)\n[ĐÃ TEST THÀNH CÔNG]" .-> F
 ```
 
 ---
@@ -52,7 +52,7 @@ flowchart TD
 | :--- | :--- | :--- |
 | **Buzzer** | GPIO2 | Còi phát tín hiệu âm thanh cảnh báo |
 | **Status LED** | GPIO4 | Đèn chỉ thị nhịp trạng thái |
-| **Servo SG90** | GPIO5 | Động cơ mở van thông khí (PWM 50Hz, 500-2500µs) |
+| **Servo SG90** | GPIO5 | Động cơ mở van thông khí (PWM 50Hz, 500-2500µs) — LEDC Arduino Native API 14-bit |
 | **Fan 12V** | GPIO6 | Quạt hút khí độc (Được đệm qua Transistor NPN 2N2222) |
 | **I2C SDA** | GPIO8 | Chân truyền dữ liệu cảm biến I2C |
 | **I2C SCL** | GPIO9 | Chân nhịp xung clock cảm biến I2C (400 kHz) |
@@ -155,35 +155,14 @@ Thiết bị sử dụng cảm biến quán tính 6 trục MPU6050 kết hợp v
 
 ---
 
-## 🌐 CHƯƠNG V: GIAO DIỆN QUẢN TRỊ VIỆT HÓA CHUYÊN NGHIỆP
+## 🌐 CHƯƠNG V: GIAO DIỆN QUẢN TRỊ CHUYÊN NGHIỆP
 *(Tệp tin lưu trữ: `src/wearable/wearable_unified_rtos/html_page.h`)*
 
 Trang web điều khiển được lập trình bằng ngôn ngữ HTML/CSS/JS thuần, tối ưu hóa dung lượng để nén cứng vào bộ nhớ Flash (`PROGMEM`) của vi điều khiển, truy cập trực tiếp qua địa chỉ IP của thiết bị.
 
-```
-┌────────────────────────────────────────────────────────┐
-│  HỆ THỐNG GIÁM SÁT SỨC KHỎE & PHÁT HIỆN TÉ NGÃ  [192...] │
-├────────────────────────────────────────────────────────┤
-│  [ TAB: THU MẪU ]             ▶ [ TAB: SUY LUẬN ]      │
-├────────────────────────────────────────────────────────┤
-│  NHÃN ƯU THẾ HIỆN TẠI:   [   FALL (TÉ NGÃ)   ]  🔴     │
-│  Xác suất:                                             │
-│  - Té ngã:  ██████████████████████████████ 85%         │
-│  - Đi bộ:   ███ 10%                                    │
-│  - Đứng yên: █ 5%                                      │
-│  X:  0.03  Y: -0.12  Z:  0.98                          │
-├────────────────────────────────────────────────────────┤
-│  LOG CẢNH BÁO TÉ NGÃ TẬP TRUNG                         │
-│  - [11:20:15] CẢNH BÁO TÉ NGÃ #1 (conf=0.85, x2)      │
-│  - [ESP-NOW] Đã phát gói tin (3x) tới Trạm chính       │
-└────────────────────────────────────────────────────────┘
-```
-
 ### Các tính năng cao cấp trên giao diện Web UI:
 1.  **Đồng bộ hóa giao diện mặc định (Auto-inference Sync):** Mỗi khi tải hoặc tải lại trang (reload), giao diện web tự động kích hoạt chế độ **Suy luận (Inference)**.
-2.  **Đồ thị thời gian thực:** Vẽ trực quan gia tốc tĩnh/động trên cả 3 trục X, Y, Z cùng với nhịp phân tích của AI.
-3.  **Việt hóa 100%:** Giao diện sử dụng ngôn ngữ tiếng Việt kỹ thuật chuẩn mực.
-
+   
 ---
 
 ## 🚦 CHƯƠNG VI: TRẠNG THÁI HIỆN TẠI & KẾ HOẠCH TIẾP THEO
@@ -193,18 +172,20 @@ Trang web điều khiển được lập trình bằng ngôn ngữ HTML/CSS/JS t
 | :--- | :--- | :--- |
 | 1 | Firmware baseline `main.ino` (ENS160, AHT21, LM75, Buzzer, LED) | ✅ Hoàn thành |
 | 2 | `Rtos_main.ino` — FreeRTOS 4 tasks (SensorRead/AlertManager/BuzzerLED/Actuator) | ✅ Hoàn thành |
-| 3 | Thiết bị đeo `wearable_unified.ino` — Edge AI + Web UI tiếng Việt | ✅ Hoàn thành |
+| 3 | Thiết bị đeo `wearable_unified.ino` — Edge AI + Web UI | ✅ Hoàn thành |
 | 4 | Tích hợp FreeRTOS vào Thiết bị đeo (`wearable_unified_rtos.ino`) — 3 tasks | ✅ Hoàn thành |
 | 5 | Bộ lọc chống báo giả (Debounce + Cooldown) | ✅ Hoàn thành |
-| 6 | **Tích hợp code ESP-NOW vào cả 2 board** | ✅ Code xong |
-| 7 | Cơ chế Latching 12s + Danger Overwrite trên Trạm chính | ✅ Code xong |
+| 6 | **Tích hợp code ESP-NOW vào cả 2 board** | ✅ Hoàn thành |
+| 7 | Cơ chế Latching 12s + Danger Overwrite trên Trạm chính | ✅ Hoàn thành |
+| 8 | **Kiểm thử tích hợp ESP-NOW thực tế trên 2 thiết bị** | ✅ Đã test thành công |
+| 9 | **Servo SG90 — Kiểm thử điều khiển vật lý** (`ENABLE_SERVO=1`) bằng Arduino Native LEDC API | ✅ Đã test thành công |
+| 10 | **Bài học kỹ thuật Servo**: Giải quyết toàn bộ chuỗi lỗi (hang ESP32Servo → ESP-IDF LEDC xung đột GPIO Matrix → giới hạn 14-bit ESP32-S3) | ✅ Tài liệu hóa đầy đủ |
 
 ### Cần làm tiếp theo
 | # | Hạng mục | Ưu tiên |
 | :--- | :--- | :--- |
-| 🔴 | **[TEST] Nạp code và kiểm thử tích hợp ESP-NOW trên 2 thiết bị thực tế** — cập nhật `MAIN_BOARD_MAC` với địa chỉ MAC thật của Trạm chính, xác minh truyền nhận <10ms, test Latching 12s và Danger Overwrite | **KHẨN CẤP** |
-| 🟡 | Hoàn thiện và tích hợp Cơ cấu chấp hành vật lý đầy đủ (Actuators) — bật `ENABLE_SERVO=1`, kiểm thử servo vật lý | Cao |
-| 🟢 | Xây dựng Web UI tập trung giám sát toàn bộ hệ thống (cả môi trường + wearable) | Thấp |
+| 🔴 | **Xây dựng Web UI cho Trạm chính (N16R8)** hiển thị thông số nhiệt độ, độ ẩm và khí độc | **KHẨN CẤP** |
+| 🔴 | **Hợp nhất Web UI của 2 thiết bị** thành một giao diện quản lý tập trung duy nhất | **KHẨN CẤP** |
 
 ---
 
@@ -220,5 +201,5 @@ Trang web điều khiển được lập trình bằng ngôn ngữ HTML/CSS/JS t
 *   **Slide 8:** Giải pháp Tăng cường dữ liệu — Scaling 3x + Jittering.
 *   **Slide 9:** Lớp Lá Chắn Chống Báo Giả — Confirm Slices + Cooldown.
 *   **Slide 10:** Giao tiếp không dây ESP-NOW — Kênh 1, gói tin packed, 3x redundancy, Latching 12s.
-*   **Slide 11:** Giao diện vận hành Việt hóa — Web UI nén PROGMEM.
+*   **Slide 11:** Giao diện vận hành Web UI nén PROGMEM.
 *   **Slide 12:** Kết quả & Lộ trình — Code hoàn chỉnh, cần test thực tế 2 thiết bị.

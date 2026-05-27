@@ -37,7 +37,7 @@
 
 #include <Adafruit_AHTX0.h>
 #include <Arduino.h>
-#include <ESP32Servo.h>
+#include <driver/ledc.h>  // LEDC API trực tiếp — thay thế ESP32Servo (tránh lỗi hang attach trên Core v3.x)
 #include <ScioSense_ENS160.h>
 #include <Temperature_LM75_Derived.h>
 #include <Wire.h>
@@ -70,7 +70,7 @@
 #define SERVO_ANGLE_DANGER 180 // Nguy hiểm: mở hoàn toàn
 
 // ══════ I2C Addresses ══════
-#define LM75_I2C_ADDR 0x48
+#define LM75_I2C_ADDR 0x49
 
 // ══════ Air Quality Thresholds ══════
 #define TVOC_WARN_PPB 150
@@ -91,7 +91,7 @@
 #define SENSOR_READ_INTERVAL_MS 1000
 
 // ══════ Feature Flags ══════
-#define ENABLE_SERVO 0  // 0=skip servo (tránh hang khi chưa nối), 1=bật
+#define ENABLE_SERVO 1  // 0=skip servo (tránh hang khi chưa nối), 1=bật
 
 // ══════ Debug ══════
 #define DEBUG_SERIAL 1
@@ -153,8 +153,29 @@ struct SensorData {
 ScioSense_ENS160 ens160(ENS160_I2CADDR_0); // ADD=GND → 0x52
 Adafruit_AHTX0 aht21;
 Generic_LM75 lm75(LM75_I2C_ADDR);
-Servo servo;
-static bool g_servoAttached = false; // true nếu servo attach thành công
+// Servo: dùng Arduino Native LEDC API (Hỗ trợ đa phiên bản Core)
+#define SERVO_LEDC_FREQ_HZ  50
+// LƯU Ý PHẦN CỨNG: Bộ điều khiển LEDC của ESP32-S3 chỉ hỗ trợ độ phân giải tối đa 14-bit.
+#define SERVO_LEDC_BITS     14
+
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+  #define SERVO_LEDC_INIT()    (pinMode(SERVO_PIN, OUTPUT), ledcAttach(SERVO_PIN, SERVO_LEDC_FREQ_HZ, SERVO_LEDC_BITS))
+  #define SERVO_LEDC_WRITE(d)  ledcWrite(SERVO_PIN, d)
+#else
+  #define SERVO_LEDC_CHANNEL   0
+  #define SERVO_LEDC_INIT()    (pinMode(SERVO_PIN, OUTPUT), ledcSetup(SERVO_LEDC_CHANNEL, SERVO_LEDC_FREQ_HZ, SERVO_LEDC_BITS), ledcAttachPin(SERVO_PIN, SERVO_LEDC_CHANNEL), true)
+  #define SERVO_LEDC_WRITE(d)  ledcWrite(SERVO_LEDC_CHANNEL, d)
+#endif
+
+// Chuyển đổi góc -> duty (50Hz): duty = pulse_us/20000.0 * max_duty
+static inline uint32_t angleToDuty(int deg) {
+  if (deg < 0) deg = 0;
+  if (deg > 180) deg = 180;
+  int pulse_us = 500 + (int)((float)deg * (2500.0f - 500.0f) / 180.0f);
+  uint32_t max_duty = (1 << SERVO_LEDC_BITS) - 1;
+  return (uint32_t)((float)pulse_us / 20000.0f * (float)max_duty);
+}
+static bool g_servoAttached = false;
 
 // FreeRTOS primitives
 static QueueHandle_t sensorQueue = nullptr;
@@ -167,11 +188,20 @@ static volatile unsigned long g_lastBuzzerToggle = 0;
 static volatile unsigned long g_lastFallTime     = 0;
 
 struct __attribute__((packed)) FallAlertPacket {
-  uint8_t alertType;      // Mã loại cảnh báo, cố định 0xFA đối với ngã
+  uint8_t alertType;      // 0xFA — cảnh báo té ngã
   uint32_t fallCount;     // Số lần phát hiện té ngã lũy kế từ thiết bị đeo
   float confidence;       // Độ tin cậy/xác suất nhận diện từ mô hình AI (0.00 - 1.00)
   uint32_t timestamp;     // Thời gian phát hiện (ms) trên thiết bị đeo
 };
+
+// Gói tin telemetry định kỳ từ XIAO — mỗi ~370ms trong chế độ INFERENCE
+struct __attribute__((packed)) ImuTelemetryPacket {
+  uint8_t  alertType;        // 0xFB
+  float    aX, aY, aZ;       // Gia tốc (g) sau khi trừ offset hiệu chuẩn
+  float    gX, gY, gZ;       // Vận tốc góc (deg/s)
+  float    fall, idle, walk; // Điểm suy luận từ Edge Impulse (0.00-1.00)
+  uint32_t timestamp;        // millis() tại XIAO
+}; // 1 + 6×4 + 3×4 + 4 = 41 byte
 
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
 void OnDataRecv(const esp_now_recv_info_t *recvInfo, const uint8_t *incomingData, int len) {
@@ -179,18 +209,34 @@ void OnDataRecv(const esp_now_recv_info_t *recvInfo, const uint8_t *incomingData
 #else
 void OnDataRecv(const uint8_t *mac_addr, const uint8_t *incomingData, int len) {
 #endif
-  if (len == sizeof(FallAlertPacket)) {
+  (void)mac_addr; // tránh warning unused
+  if (len < 1) return;
+  uint8_t type = incomingData[0];
+
+  // ── 0xFA: Cảnh báo té ngã ────────────────────────────────────────
+  if (type == 0xFA && len == (int)sizeof(FallAlertPacket)) {
     FallAlertPacket packet;
     memcpy(&packet, incomingData, sizeof(packet));
-    if (packet.alertType == 0xFA) {
-      Serial.printf("[ESP-NOW] Nhận gói cảnh báo NGÃ! Lũy kế: %u | Confidence: %.2f\n",
-                    packet.fallCount, packet.confidence);
-      if (xSemaphoreTake(alertMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-        g_alertLevel = ALERT_FALL;
-        g_lastFallTime = millis();
-        xSemaphoreGive(alertMutex);
-      }
+    Serial.printf("[ESP-NOW] *** CANH BAO TE NGA! *** Luy ke: %u | Confidence: %.2f\n",
+                  packet.fallCount, packet.confidence);
+    if (xSemaphoreTake(alertMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+      g_alertLevel   = ALERT_FALL;
+      g_lastFallTime = millis();
+      xSemaphoreGive(alertMutex);
     }
+    return;
+  }
+
+  // ── 0xFB: Telemetry suy luận định kỳ (INFERENCE mode) ───────────
+  if (type == 0xFB && len == (int)sizeof(ImuTelemetryPacket)) {
+    ImuTelemetryPacket pkt;
+    memcpy(&pkt, incomingData, sizeof(pkt));
+    const char *top = (pkt.fall > pkt.idle && pkt.fall > pkt.walk) ? "FALL"
+                    : (pkt.walk > pkt.idle)                         ? "WALK" : "IDLE";
+    Serial.printf("[WEARABLE] aX:%6.3f aY:%6.3f aZ:%6.3f | "
+                  "fall:%.2f idle:%.2f walk:%.2f -> %s\n",
+                  pkt.aX, pkt.aY, pkt.aZ,
+                  pkt.fall, pkt.idle, pkt.walk, top);
   }
 }
 
@@ -399,6 +445,24 @@ void TaskActuator(void * /*pvParam*/) {
   int lastAngle = -1; // theo dõi thay đổi để tránh ghi servo liên tục
   bool lastFan = false;
 
+#if ENABLE_SERVO
+  // Khởi tạo Servo bằng Arduino Native LEDC Wrapper
+  vTaskDelay(pdMS_TO_TICKS(500)); // chờ nguồn ổn định
+#if DEBUG_SERIAL
+  Serial.println("[ACTUATOR] Đang khởi tạo Servo (LEDC)..."); Serial.flush();
+#endif
+  g_servoAttached = SERVO_LEDC_INIT();
+#if DEBUG_SERIAL
+  Serial.printf("[ACTUATOR] Servo LEDC init: %s\n", g_servoAttached ? "OK" : "FAIL");
+  Serial.flush();
+#endif
+  if (g_servoAttached) {
+    // Đưa servo về góc mặc định ban đầu
+    SERVO_LEDC_WRITE(angleToDuty(SERVO_ANGLE_NORMAL));
+    lastAngle = SERVO_ANGLE_NORMAL;
+  }
+#endif
+
   for (;;) {
     AlertLevel lvl = ALERT_NONE;
     if (xSemaphoreTake(alertMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -428,9 +492,9 @@ void TaskActuator(void * /*pvParam*/) {
       break;
     }
 
-    // Chỉ ghi servo khi góc thay đổi và servo đã attach
+    // Chỉ ghi servo khi góc thay đổi và servo đã init
     if (g_servoAttached && targetAngle != lastAngle) {
-      servo.write(targetAngle);
+      SERVO_LEDC_WRITE(angleToDuty(targetAngle));
       lastAngle = targetAngle;
 #if DEBUG_SERIAL
       Serial.printf("[ACTUATOR] Servo → %d°\n", targetAngle);
@@ -531,7 +595,13 @@ void TaskBuzzerLED(void * /*pvParam*/) {
 void setup() {
 #if DEBUG_SERIAL
   Serial.begin(115200);
-  delay(500);  // đợi Serial ổn định
+  
+  // Đợi cổng Serial ảo (USB CDC) kết nối (tối đa 4s) để tránh trôi mất log boot
+  uint32_t startMs = millis();
+  while (!Serial && (millis() - startMs < 4000)) {
+    delay(10);
+  }
+
   Serial.println(
       "\n[MAIN] ═══ HỆ THỐNG PHÁT HIỆN KHÍ ĐỘC & NHIỆT ĐỘ (FreeRTOS) ═══");
   Serial.println("[MAIN] Board: ESP32-S3 N16R8 | 16MB Flash | 8MB OPI PSRAM");
@@ -584,7 +654,7 @@ void setup() {
 #if DEBUG_SERIAL
   Serial.printf("[SENSOR] ENS160 %s\n", ens160.available() ? "OK" : "FAIL");
   Serial.printf("[SENSOR] AHT21  %s\n", aht21.begin() ? "OK" : "FAIL");
-  Serial.printf("[SENSOR] LM75   %s (0x48)\n",
+  Serial.printf("[SENSOR] LM75   %s\n",
                 i2cPresent(LM75_I2C_ADDR) ? "OK" : "MISSING");
   Serial.printf("[MAIN] Free SRAM: %u bytes\n",
                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
@@ -592,17 +662,9 @@ void setup() {
 #endif
 
 #if ENABLE_SERVO
-  // Servo
+  // Servo được chuyển sang khởi tạo trong TaskActuator để tránh treo lúc khởi động
 #if DEBUG_SERIAL
-  Serial.println("[INIT] Servo attach..."); Serial.flush();
-#endif
-  servo.setPeriodHertz(50);
-  servo.attach(SERVO_PIN, 500, 2500);
-  g_servoAttached = servo.attached();
-  if (g_servoAttached) servo.write(SERVO_ANGLE_NORMAL);
-#if DEBUG_SERIAL
-  Serial.printf("[INIT] Servo %s\n", g_servoAttached ? "OK" : "FAIL");
-  Serial.flush();
+  Serial.println("[INIT] Servo sẽ được khởi tạo trong TaskActuator..."); Serial.flush();
 #endif
 #else
 #if DEBUG_SERIAL
@@ -644,7 +706,7 @@ void setup() {
   xTaskCreatePinnedToCore(TaskBuzzerLED, "BuzzerLED", TASK_STACK_BUZZ, nullptr,
                           5, nullptr, 1);
   xTaskCreatePinnedToCore(TaskActuator, "Actuator", TASK_STACK_ACTUATOR,
-                          nullptr, 3, nullptr, 0);
+                          nullptr, 3, nullptr, 1);
 
 #if DEBUG_SERIAL
   Serial.println("[MAIN] ✅ FreeRTOS tasks started!");

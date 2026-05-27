@@ -58,14 +58,35 @@
 #include <esp_wifi.h>
 
 // Địa chỉ MAC của Trạm chính (Main Board). Copy địa chỉ in ra ở cổng Serial Trạm chính vào đây.
-static const uint8_t MAIN_BOARD_MAC[] = {0x24, 0xEC, 0x4A, 0x01, 0x02, 0x03}; // Giá trị mặc định placeholder
+static const uint8_t MAIN_BOARD_MAC[] = {0xA4, 0xCB, 0x8F, 0xD4, 0x93, 0x18};
 
 struct __attribute__((packed)) FallAlertPacket {
-  uint8_t alertType;      // Mã loại cảnh báo, cố định 0xFA đối với ngã
+  uint8_t alertType;      // 0xFA — cảnh báo té ngã
   uint32_t fallCount;     // Số lần phát hiện té ngã lũy kế từ thiết bị đeo
   float confidence;       // Độ tin cậy/xác suất nhận diện từ mô hình AI (0.00 - 1.00)
   uint32_t timestamp;     // Thời gian phát hiện (ms) trên thiết bị đeo
 };
+
+// Gói tin telemetry định kỳ — gửi mỗi ~370ms trong chế độ INFERENCE
+struct __attribute__((packed)) ImuTelemetryPacket {
+  uint8_t  alertType;        // 0xFB
+  float    aX, aY, aZ;       // Gia tốc (g) sau khi trừ offset hiệu chuẩn
+  float    gX, gY, gZ;       // Vận tốc góc (deg/s)
+  float    fall, idle, walk; // Điểm suy luận từ Edge Impulse (0.00-1.00)
+  uint32_t timestamp;        // millis() tại XIAO
+}; // 1 + 6×4 + 3×4 + 4 = 41 byte
+
+// Callback gửi (TX) — tương thích chéo cả Core 2.x và Core 3.x (nhờ bọc macro phiên bản)
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+void onDataSent(const esp_now_send_info_t *tx_info, esp_now_send_status_t status) {
+  const uint8_t *mac_addr = tx_info->des_addr;
+#else
+void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+#endif
+  Serial.printf("[ESP-NOW] Kết quả gửi tới %02X:%02X:%02X:%02X:%02X:%02X -> %s\n",
+                mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5],
+                status == ESP_NOW_SEND_SUCCESS ? "THÀNH CÔNG" : "THẤT BẠI");
+}
 
 bool initEspNow() {
   if (esp_now_init() != ESP_OK) {
@@ -73,6 +94,9 @@ bool initEspNow() {
     return false;
   }
   Serial.println("[ESP-NOW] Khởi tạo thành công!");
+  
+  // Đăng ký callback báo trạng thái gửi (TX)
+  esp_now_register_send_cb(onDataSent);
   
   // Đăng ký Peer (Trạm chính)
   esp_now_peer_info_t peerInfo = {};
@@ -180,7 +204,7 @@ static bool inferBufFull = false; // đợi đủ 1 window trước lần infere
 WebServer server(80);
 
 // ╔══════════════════════════════════════════════════════════════╗
-// ║              FREERTOS PRIMITIVES                              ║
+// ║                      FREERTOS PRIMITIVES                     ║
 // ╚══════════════════════════════════════════════════════════════╝
 // imuQueue: TaskIMURead → TaskEdgeAI (kích thước ImuData, chiều dài 30)
 static QueueHandle_t imuQueue = nullptr;
@@ -721,7 +745,13 @@ void handleUploadManual() {
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
-  delay(500);
+  
+  // Đợi cổng Serial ảo (USB CDC) kết nối (tối đa 4s) để tránh trôi mất log boot
+  uint32_t startMs = millis();
+  while (!Serial && (millis() - startMs < 4000)) {
+    delay(10);
+  }
+
   pinMode(LED_PIN, OUTPUT);
   pinMode(BTN_PIN, INPUT_PULLUP);
   ledOff();
@@ -972,6 +1002,19 @@ void TaskEdgeAI(void * /*pvParam*/) {
                           (inferResult.fall >= FALL_ALERT_THRESHOLD)
                               ? " *** ALERT ***" : "",
                           inferResult.timing_dsp, inferResult.timing_cls);
+
+            // ── Gửi telemetry 0xFB định kỳ tới Trạm chính qua ESP-NOW ──
+            {
+              ImuTelemetryPacket tpkt;
+              tpkt.alertType = 0xFB;
+              tpkt.aX = web_aX; tpkt.aY = web_aY; tpkt.aZ = web_aZ;
+              tpkt.gX = web_gX; tpkt.gY = web_gY; tpkt.gZ = web_gZ;
+              tpkt.fall  = inferResult.fall;
+              tpkt.idle  = inferResult.idle;
+              tpkt.walk  = inferResult.walk;
+              tpkt.timestamp = millis();
+              esp_now_send(MAIN_BOARD_MAC, (uint8_t *)&tpkt, sizeof(tpkt));
+            }
           }
         }
       }

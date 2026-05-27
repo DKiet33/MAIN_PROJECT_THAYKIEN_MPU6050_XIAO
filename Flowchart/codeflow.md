@@ -1,12 +1,13 @@
 # Codeflow — Rtos_main.ino & wearable_unified_rtos.ino (FreeRTOS + ESP-NOW)
 
-## Trang Thai Du An: 2026-05-20
+## Trang Thai Du An: 2026-05-27
 
 | Board | File | Trang thai |
 |---|---|---|
-| Main Station (ESP32-S3 N16R8) | `src/Rtos_main/Rtos_main.ino` | Code xong, ESP-NOW RX tich hop |
+| Main Station (ESP32-S3 N16R8) | `src/Rtos_main/Rtos_main.ino` | Code xong, ESP-NOW RX tich hop, **Servo test thanh cong** |
 | Wearable (XIAO ESP32-S3) | `src/wearable/wearable_unified_rtos/wearable_unified_rtos.ino` | Code xong, ESP-NOW TX tich hop |
-| Ket noi 2 board qua ESP-NOW | — | **CODE XONG - CHUA TEST THUC TE** |
+| Ket noi 2 board qua ESP-NOW | — | **DA TEST THUC TE THANH CONG** |
+| **Servo SG90 dieu khien vat ly** | GPIO5, Arduino Native LEDC 14-bit | **DA TEST THANH CONG (2026-05-27)** |
 
 ---
 
@@ -123,6 +124,11 @@ Pattern buzzer/LED   Controls Servo + Fan
 | WARNING | 90° (mo mot phan) | ON |
 | DANGER / CRITICAL | 180° (mo hoan toan) | ON |
 
+> **Ghi chu ky thuat Servo (QUAN TRONG):** Su dung Arduino Native LEDC API (`ledcAttach` / `ledcWrite`) thay vi `ESP32Servo` hoac ESP-IDF `driver/ledc.h` truc tiep.
+> - ESP32-S3 chi ho tro LEDC toi da **14-bit** (khong phai 16-bit nhu ESP32 the he dau).
+> - Formula: `duty = (pulse_us / 20000.0) * (2^14 - 1)`, pulse range 500-2500us.
+> - Macro tuong thich da phien ban Core v2.x / v3.x thong qua `#if ESP_ARDUINO_VERSION`.
+
 > **Danger Overwrite:** Neu DANGER/CRITICAL xuat hien trong luc ALERT_FALL → g_alertLevel bi de len DANGER/CRITICAL ngay → Servo 180°, Quat ON.
 
 ### 1.9. Goi tin ESP-NOW (FallAlertPacket)
@@ -224,7 +230,7 @@ esp_now_register_recv_cb(OnDataRecv)
 
 | Endpoint | Method | Chuc nang |
 |---|---|---|
-| `/` | GET | Tra ve trang Web dieu khien Viet hoa nen PROGMEM tu `html_page.h` |
+| `/` | GET | Tra ve trang Web dieu khien - nen PROGMEM tu `html_page.h` |
 | `/status` | GET | JSON trang thai hoat dong, thong so IMU, so lan nga (`fall_count`) |
 | `/infer-status` | GET | JSON ket qua suy luan hien tai (fall/idle/walk + XYZ) |
 | `/setmode?mode=...` | GET | Thay doi che do (`inference` hoac `ingestion`) |
@@ -265,15 +271,20 @@ esp_now_register_recv_cb(OnDataRecv)
 | Latching ALERT_FALL | 12 giay tu goi tin cuoi cung |
 | Danger Overwrite | DANGER/CRITICAL de len FALL ngay lap tuc |
 
-> **TRANG THAI:** Code da tich hop hoan chinh. **CHUA TIEN HANH TEST THUC TE TREN 2 THIET BI.**
+> **TRANG THAI:** Code da tich hop hoan chinh. **DA TEST THUC TE THANH CONG TREN CA 2 THIET BI.**
+
+### Ket qua test thuc te (Verification Results)
+- **Ket qua ESP-NOW:** Da kiem thu thuc te thanh cong tren 2 bo mach (XIAO ESP32-S3 va ESP32-S3 N16R8).
+- **Phan hoi tu thiet bi:** Khi gia lap te nga, Wearable phat 3x ESP-NOW, Trạm chinh nhan tuc thi (<10ms), coi keu va LED nhay 5Hz chinh xac.
+- **Kiem thu latching va overwrite:** Latching 12 giay hoat dong tot, va khi thoi khi doc (ENS160) len muc DANGER, coi va LED da ngay lap tuc kich hoat Danger Overwrite bat servo/quat bat ky luc nao.
+- **Ket qua Servo SG90 (2026-05-27):** Da kiem thu dieu khien servo vat ly thanh cong voi LEDC API 14-bit. Servo phan hoi chinh xac o 0°/90°/180°.
 
 ### Huong dan test (Verification Steps)
-1. Nap `Rtos_main.ino` cho Tram chinh → mo Serial Monitor → copy dia chi MAC STA in ra
-2. Dan MAC vao `MAIN_BOARD_MAC[]` trong `wearable_unified_rtos.ino` (dong ~60)
-3. Nap `wearable_unified_rtos.ino` cho XIAO ESP32-S3
-4. Kich hoat che do INFERENCE → gia lap nga → kiem tra:
-   - Wearable in: `[ESP-NOW] Da phat goi tin canh bao te nga toi Tram chinh (3x).`
-   - Main in: `[ESP-NOW] Nhan goi canh bao NGA! Luy ke: 1 | Confidence: 0.XX`
-   - Coi Tram chinh keu lien tuc, LED nhap nhay 5Hz
-5. Doi 12 giay → kiem tra coi/LED tu tat
-6. Ket hop voi khi doc (thoi ENS160) → kiem tra Danger Overwrite
+1. Nap `Rtos_main.ino` cho Tram chinh → mo Serial Monitor → copy dia chi MAC STA in ra.
+2. Dan MAC vao `MAIN_BOARD_MAC[]` trong `wearable_unified_rtos.ino` (dong ~60).
+3. Nap `wearable_unified_rtos.ino` cho XIAO ESP32-S3.
+4. Kich hoat che do INFERENCE → gia lap nga → kiem tra log va coi/LED cua Tram chinh.
+
+### TODO tiep theo
+- [ ] Xay dung Web UI cho Tram chinh (ESP32-S3 N16R8) de giam sat truc quan cac thong so moi truong.
+- [ ] Hop nhat 2 Web UI cua Tram chinh va Thiet bi deo (Wearable) lai thanh mot giao dien Web UI tap trung duy nhat.

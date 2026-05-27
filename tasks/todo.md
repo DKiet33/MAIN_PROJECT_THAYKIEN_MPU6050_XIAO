@@ -17,7 +17,7 @@
 - [x] Them Servo SG90 (GPIO5) va Quat 12V / NPN 2N2222 (GPIO6) vao `Rtos_main.ino`.
 - [x] Tạo `src/fall_detection_xiao/fall_detection_xiao.ino` — sketch mẫu cho XIAO ESP32-S3.
 - [x] Cập nhật `hardware.md` với pin map đầy đủ (Servo, Fan, XIAO sub-board).
-- [x] Hoàn thiện Fall Detection trên XIAO ESP32-S3 (MPU6050 + Edge Impulse) với đầy đủ Web UI điều khiển tiếng Việt có dấu.
+- [x] Hoàn thiện Fall Detection trên XIAO ESP32-S3 (MPU6050 + Edge Impulse) với đầy đủ Web UI điều khiển.
 - [x] Tích hợp bộ lọc chống báo giả (Debounce + Cooldown) cho luồng suy luận phát hiện té ngã.
 - [x] Nghiên cứu kiến trúc tích hợp FreeRTOS cho Wearable và giải pháp kết nối không dây ESP-NOW đồng kênh Wi-Fi (lưu trữ trong `research_notes.md`).
 - [x] Backup `wearable_unified` folder → `src/wearable/backup/wearable_unified_backup_20260520`.
@@ -37,13 +37,11 @@
 
 ## Cần Làm Tiếp Theo (Pending)
 
-- [ ] **[KHẨN CẤP] Test tích hợp ESP-NOW trên 2 thiết bị thực tế:**
-    - Nap `Rtos_main.ino` → mo Serial Monitor → copy MAC STA cua Tram chinh
-    - Dan MAC vao `MAIN_BOARD_MAC[]` trong `wearable_unified_rtos.ino` dong ~60
-    - Nap `wearable_unified_rtos.ino` cho XIAO ESP32-S3
-    - Kiem tra truyen nhan < 10ms, Latching 12s, Danger Overwrite
-- [ ] Bat `ENABLE_SERVO=1` va kiem thu servo vat ly tren Main Board
-- [ ] (Tuy chon) Xay dung Web UI tap trung giam sat ca moi truong + wearable
+- [x] Tạo code test servo sử dụng LEDC tại [test_servo_ledc.ino](file:///c:/CODE/MAIN_PROJECT_THAYKIEN/src/test_servo_ledc/test_servo_ledc.ino) để kiểm tra servo độc lập không qua thư viện ESP32Servo.
+- [x] Khắc phục lỗi servo không hoạt động bằng cách chuyển từ ESP-IDF LEDC API trực tiếp sang Arduino Native LEDC API (hỗ trợ đa phiên bản Core v2.x / v3.x thông qua Macro compile guard).
+- [ ] Xây dựng Web UI cho Trạm chính (ESP32-S3 N16R8) để giám sát các thông số môi trường (Nhiệt độ, Độ ẩm, Khí độc).
+- [ ] Hợp nhất 2 Web UI của Trạm chính (N16R8) và Thiết bị đeo (XIAO ESP32-S3) thành một giao diện quản trị tập trung duy nhất.
+- [x] Bat `ENABLE_SERVO=1` va kiem thu servo vat ly tren Main Board.
 
 ## Review
 
@@ -52,10 +50,14 @@
 - 2026-04-22: Sua alert escalation logic va `/stop` suppression.
 - 2026-05-15: Tao `Rtos_main.ino` voi FreeRTOS (bo Telegram, MQ2; them Servo, Fan).
 - 2026-05-15: Tao `fall_detection_xiao.ino` — sketch mau XIAO ESP32-S3.
-- 2026-05-18: Hoàn thiện dự án thiết bị đeo phát hiện té ngã với MPU6050 và XIAO ESP32-S3 (Edge Impulse, Dual-tab Ingestion/Inference Web UI, 100% tiếng Việt có dấu, tích hợp bộ lọc chống báo giả liên tục Debounce + Cooldown).
+- 2026-05-18: Hoàn thiện dự án thiết bị đeo phát hiện té ngã với MPU6050 và XIAO ESP32-S3 (Edge Impulse, Dual-tab Ingestion/Inference Web UI, tích hợp bộ lọc chống báo giả liên tục Debounce + Cooldown).
 - 2026-05-20: Hoàn thành báo cáo nghiên cứu tích hợp FreeRTOS đa nhiệm và kết nối không dây đồng kênh ESP-NOW giữa hai board (lưu trữ trong `research_notes.md`).
 - 2026-05-20: Tích hợp FreeRTOS vào Wearable Sub-Board (`wearable_unified_rtos.ino`) — 3 task (TaskIMURead Core1/Pri5, TaskEdgeAI Core1/Pri4, TaskNetworkWeb Core0/Pri3) bảo vệ bằng `imuQueue` + `stateMutex`. Backup gốc tại `backup/wearable_unified_backup_20260520`.
 - 2026-05-20: Sửa đổi test_mpu6050_rtos.ino di chuyển quét I2C và khởi tạo MPU vào setup(), nâng stack size, cô lập ngắt I2C trên Core 1.
-- 2026-05-20: **Tích hợp hoàn chỉnh ESP-NOW TX/RX trên cả 2 board.** Thiết bị đeo phát `FallAlertPacket` (0xFA) 3x qua Kênh 1. Trạm chính nhận qua `OnDataRecv`, kích hoạt `ALERT_FALL=5` với Latching 12s và Danger Overwrite. Cơ chế Buzzer/LED/Actuator đã cập nhật đầy đủ. **Chưa test thực tế trên 2 thiết bị.**
-- 2026-05-20: Cập nhật toàn bộ tài liệu .md (README, Flowchart/) phản ánh tình hình mới nhất dự án.
+- 2026-05-20: Tích hợp hoàn chỉnh ESP-NOW TX/RX trên cả 2 board. Thiết bị đeo phát `FallAlertPacket` (0xFA) 3x qua Kênh 1. Trạm chính nhận qua `OnDataRecv`, kích hoạt `ALERT_FALL=5` với Latching 12s và Danger Overwrite. Cơ chế Buzzer/LED/Actuator đã cập nhật đầy đủ.
+- 2026-05-27: **Test thực tế thành công kết nối ESP-NOW giữa bộ đôi XIAO ESP32-S3 và ESP32-S3 N16R8.** Sửa lỗi USB CDC trôi log bằng cách thêm vòng lặp chờ, sửa lỗi sập Wi-Fi do delay() trong ISR bằng cơ chế cờ hiệu volatile non-blocking. Cập nhật chữ ký hàm callback tương thích chéo phiên bản Core v3.x. Đồng bộ toàn bộ nâng cấp vào firmware chính thức.
+- 2026-05-27: Cập nhật toàn bộ tài liệu .md (README, Flowchart/) phản ánh tình hình mới nhất dự án.
+- 2026-05-27: Tạo sketch test độc lập cho Servo SG90 sử dụng trực tiếp LEDC API của ESP-IDF tại `test_servo_ledc.ino`. Thiết lập chế độ Dual-Mode: quét tự động (0° -> 90° -> 180° -> 90°) và điều khiển trực quan qua dòng lệnh Serial (0-180), đồng thời bổ sung chống sụt áp tức thời và giữ log USB CDC.
+- 2026-05-27: **Test vật lý Servo SG90 thành công trên ESP32-S3 N16R8.** Giải quyết toàn bộ chuỗi lỗi: (1) Hang do ESP32Servo infinite-loop trên Core v3.x, (2) ESP-IDF LEDC trực tiếp không xuất xung do không đăng ký GPIO Matrix với Arduino Framework, (3) `ledcAttach` FAIL do ESP32-S3 chỉ hỗ trợ LEDC tối đa 14-bit (không phải 16-bit). Giải pháp cuối cùng: Arduino Native LEDC API + 14-bit resolution + Macro Version Guard. Đã đồng bộ vào `Rtos_main.ino` và bỏ code debug sweep.
+
 
