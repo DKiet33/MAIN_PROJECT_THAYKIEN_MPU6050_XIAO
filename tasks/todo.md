@@ -26,6 +26,28 @@
 - [x] Sửa đổi đồng bộ luồng I2C trong wearable_unified.ino (CALIBRATING tiêu thụ dữ liệu từ imuQueue thay vì gọi imuRead trực tiếp trên Core 0).
 - [x] Tích hợp phát tín hiệu ESP-NOW vào Wearable Board (khóa AP kênh 1, gửi gói tin `FallAlertPacket`).
 - [x] Tích hợp nhận tín hiệu ESP-NOW vào Trạm chính (`Rtos_main.ino`), kích hoạt trạng thái `ALERT_FALL` qua `alertMutex` với tự khóa 12s.
+- [x] Mở rộng nội dung kỹ thuật cho 6 chương của báo cáo [BaoCaoCuoiKy_DATKHTN_Nhom7.docx](file:///c:/CODE/MAIN_PROJECT_THAYKIEN/BaoCaoCuoiKy_DATKHTN_Nhom7.docx) trực tiếp in-place.
+- [x] Thêm danh mục tài liệu tham khảo thực tế đã kiểm chứng vào mục `TÀI LIỆU THAM KHẢO`.
+- [x] Thực hiện trích dẫn chính xác (cites `[1]`-`[7]`) trong nội dung các chương mục.
+- [x] Định dạng tất cả các bảng ở cỡ 13.5pt, căn lề trái văn bản nội dung, và chèn các ngắt trang chuẩn.
+- [x] Kiểm nghiệm độ chính xác của Mục lục và Danh mục bảng biểu tự động.
+- [x] Định dạng lại các tài liệu trong phần Tài liệu tham khảo (TLTK) của tệp Word và đồng bộ hóa vào build_docx_inplace.py
+- [x] Rà soát, quét văn bản và loại bỏ các từ viết tắt không sử dụng khỏi bảng danh mục từ viết tắt.
+- [x] Vẽ Lưu đồ thuật toán khởi động hệ thống Trạm chính:
+    - [x] Tạo tệp tài liệu hướng dẫn vẽ lưu đồ `drawio_xml/flowchart_drawing_guide.md`
+    - [x] Viết tập lệnh sinh XML `scratch/generate_flowchart_xml.py`
+    - [x] Chạy tập lệnh sinh XML và xuất tệp `drawio_xml/khoi_dong_tram_chinh.drawio`
+    - [x] Xác minh cấu trúc XML và định dạng của các nút (Helvetica, 15px, chữ đen, màu pastel, bố cục dọc)
+- [x] Vẽ Lưu đồ thuật toán tính toán cấp độ cảnh báo TaskAlertManager:
+    - [x] Viết tập lệnh sinh XML `scratch/gen_taskalertmanager.py`
+    - [x] Chạy và xuất tệp `drawio_xml/taskalertmanager.drawio`
+    - [x] Xác minh định dạng (18 vertices, 24 edges, tất cả pass)
+- [x] Cập nhật và mở rộng báo cáo kỹ thuật dựa trên lưu đồ và ảnh huấn luyện Edge Impulse:
+    - [x] Sao lưu tài liệu sang `BaoCaoCuoiKy_DATKHTN_Nhom7_backup.docx`
+    - [x] Thêm chú thích dưới hình vẽ và lưu đồ thuật toán (Hình 1.1 đến Hình 4.10)
+    - [x] Viết mở rộng mục 1.1, 2.2, 3 (khởi động trạm chính), 3.3 (mô tả 3 lưu đồ), 4 (khởi động thiết bị đeo), 4.2 (Edge Impulse), và 4.3 (TaskEdgeAI)
+    - [x] Thiết lập XML dirty flag để tự động cập nhật danh mục và mục lục trong Word
+    - [x] Chạy kiểm tra và xác minh kết xuất PDF
 
 ## Notes
 

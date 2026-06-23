@@ -3,3 +3,12 @@
 .src/Rtos_main_backup
 .wearable/backup
 .wearable/wearable_unified_rtos_backup
+*.docx
+*.pdf
+*.pptx
+/drawio_xml
+/skills
+/scratch
+/tasks
+SKILL_WORD_CHONGAI_V3.md
+huong_dan_agent_lam_word_do_an_ver_3.md

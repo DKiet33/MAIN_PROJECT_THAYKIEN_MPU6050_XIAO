@@ -17,7 +17,7 @@
 //   TaskSensorRead   Core1 Pri3  — Đọc cảm biến mỗi 1s → sensorQueue
 //   TaskAlertManager Core1 Pri4  — Nhận data → tính AlertLevel
 //   TaskBuzzerLED    Core1 Pri5  — Điều khiển Buzzer & LED theo AlertLevel
-//   TaskActuator     Core0 Pri3  — Điều khiển Servo + Quạt 12V (NPN 2N2222)
+//   TaskActuator     Core1 Pri3  — Điều khiển Servo + Quạt 12V (NPN 2N2222)
 //
 // Actuator Logic:
 //   ALERT_NONE/INFO     → Servo 0°   | Fan OFF
@@ -37,14 +37,15 @@
 
 #include <Adafruit_AHTX0.h>
 #include <Arduino.h>
-#include <driver/ledc.h>  // LEDC API trực tiếp — thay thế ESP32Servo (tránh lỗi hang attach trên Core v3.x)
 #include <ScioSense_ENS160.h>
 #include <Temperature_LM75_Derived.h>
 #include <Wire.h>
+#include <driver/ledc.h> // LEDC API trực tiếp — thay thế ESP32Servo (tránh lỗi hang attach trên Core v3.x)
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+
 
 #include <WiFi.h>
 #include <esp_now.h>
@@ -91,7 +92,7 @@
 #define SENSOR_READ_INTERVAL_MS 1000
 
 // ══════ Feature Flags ══════
-#define ENABLE_SERVO 1  // 0=skip servo (tránh hang khi chưa nối), 1=bật
+#define ENABLE_SERVO 1 // 0=skip servo (tránh hang khi chưa nối), 1=bật
 
 // ══════ Debug ══════
 #define DEBUG_SERIAL 1
@@ -154,23 +155,31 @@ ScioSense_ENS160 ens160(ENS160_I2CADDR_0); // ADD=GND → 0x52
 Adafruit_AHTX0 aht21;
 Generic_LM75 lm75(LM75_I2C_ADDR);
 // Servo: dùng Arduino Native LEDC API (Hỗ trợ đa phiên bản Core)
-#define SERVO_LEDC_FREQ_HZ  50
-// LƯU Ý PHẦN CỨNG: Bộ điều khiển LEDC của ESP32-S3 chỉ hỗ trợ độ phân giải tối đa 14-bit.
-#define SERVO_LEDC_BITS     14
+#define SERVO_LEDC_FREQ_HZ 50
+// LƯU Ý PHẦN CỨNG: Bộ điều khiển LEDC của ESP32-S3 chỉ hỗ trợ độ phân giải tối
+// đa 14-bit.
+#define SERVO_LEDC_BITS 14
 
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
-  #define SERVO_LEDC_INIT()    (pinMode(SERVO_PIN, OUTPUT), ledcAttach(SERVO_PIN, SERVO_LEDC_FREQ_HZ, SERVO_LEDC_BITS))
-  #define SERVO_LEDC_WRITE(d)  ledcWrite(SERVO_PIN, d)
+#define SERVO_LEDC_INIT()                                                      \
+  (pinMode(SERVO_PIN, OUTPUT),                                                 \
+   ledcAttach(SERVO_PIN, SERVO_LEDC_FREQ_HZ, SERVO_LEDC_BITS))
+#define SERVO_LEDC_WRITE(d) ledcWrite(SERVO_PIN, d)
 #else
-  #define SERVO_LEDC_CHANNEL   0
-  #define SERVO_LEDC_INIT()    (pinMode(SERVO_PIN, OUTPUT), ledcSetup(SERVO_LEDC_CHANNEL, SERVO_LEDC_FREQ_HZ, SERVO_LEDC_BITS), ledcAttachPin(SERVO_PIN, SERVO_LEDC_CHANNEL), true)
-  #define SERVO_LEDC_WRITE(d)  ledcWrite(SERVO_LEDC_CHANNEL, d)
+#define SERVO_LEDC_CHANNEL 0
+#define SERVO_LEDC_INIT()                                                      \
+  (pinMode(SERVO_PIN, OUTPUT),                                                 \
+   ledcSetup(SERVO_LEDC_CHANNEL, SERVO_LEDC_FREQ_HZ, SERVO_LEDC_BITS),         \
+   ledcAttachPin(SERVO_PIN, SERVO_LEDC_CHANNEL), true)
+#define SERVO_LEDC_WRITE(d) ledcWrite(SERVO_LEDC_CHANNEL, d)
 #endif
 
 // Chuyển đổi góc -> duty (50Hz): duty = pulse_us/20000.0 * max_duty
 static inline uint32_t angleToDuty(int deg) {
-  if (deg < 0) deg = 0;
-  if (deg > 180) deg = 180;
+  if (deg < 0)
+    deg = 0;
+  if (deg > 180)
+    deg = 180;
   int pulse_us = 500 + (int)((float)deg * (2500.0f - 500.0f) / 180.0f);
   uint32_t max_duty = (1 << SERVO_LEDC_BITS) - 1;
   return (uint32_t)((float)pulse_us / 20000.0f * (float)max_duty);
@@ -182,45 +191,48 @@ static QueueHandle_t sensorQueue = nullptr;
 static SemaphoreHandle_t alertMutex = nullptr;
 
 // Shared state (protected by alertMutex)
-static volatile AlertLevel    g_alertLevel       = ALERT_NONE;
-static volatile bool          g_buzzerState      = false;
+static volatile AlertLevel g_alertLevel = ALERT_NONE;
+static volatile bool g_buzzerState = false;
 static volatile unsigned long g_lastBuzzerToggle = 0;
-static volatile unsigned long g_lastFallTime     = 0;
+static volatile unsigned long g_lastFallTime = 0;
 
 struct __attribute__((packed)) FallAlertPacket {
-  uint8_t alertType;      // 0xFA — cảnh báo té ngã
-  uint32_t fallCount;     // Số lần phát hiện té ngã lũy kế từ thiết bị đeo
-  float confidence;       // Độ tin cậy/xác suất nhận diện từ mô hình AI (0.00 - 1.00)
-  uint32_t timestamp;     // Thời gian phát hiện (ms) trên thiết bị đeo
+  uint8_t alertType;  // 0xFA — cảnh báo té ngã
+  uint32_t fallCount; // Số lần phát hiện té ngã lũy kế từ thiết bị đeo
+  float confidence; // Độ tin cậy/xác suất nhận diện từ mô hình AI (0.00 - 1.00)
+  uint32_t timestamp; // Thời gian phát hiện (ms) trên thiết bị đeo
 };
 
 // Gói tin telemetry định kỳ từ XIAO — mỗi ~370ms trong chế độ INFERENCE
 struct __attribute__((packed)) ImuTelemetryPacket {
-  uint8_t  alertType;        // 0xFB
-  float    aX, aY, aZ;       // Gia tốc (g) sau khi trừ offset hiệu chuẩn
-  float    gX, gY, gZ;       // Vận tốc góc (deg/s)
-  float    fall, idle, walk; // Điểm suy luận từ Edge Impulse (0.00-1.00)
-  uint32_t timestamp;        // millis() tại XIAO
+  uint8_t alertType;      // 0xFB
+  float aX, aY, aZ;       // Gia tốc (g) sau khi trừ offset hiệu chuẩn
+  float gX, gY, gZ;       // Vận tốc góc (deg/s)
+  float fall, idle, walk; // Điểm suy luận từ Edge Impulse (0.00-1.00)
+  uint32_t timestamp;     // millis() tại XIAO
 }; // 1 + 6×4 + 3×4 + 4 = 41 byte
 
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
-void OnDataRecv(const esp_now_recv_info_t *recvInfo, const uint8_t *incomingData, int len) {
+void OnDataRecv(const esp_now_recv_info_t *recvInfo,
+                const uint8_t *incomingData, int len) {
   const uint8_t *mac_addr = recvInfo->src_addr;
 #else
 void OnDataRecv(const uint8_t *mac_addr, const uint8_t *incomingData, int len) {
 #endif
   (void)mac_addr; // tránh warning unused
-  if (len < 1) return;
+  if (len < 1)
+    return;
   uint8_t type = incomingData[0];
 
   // ── 0xFA: Cảnh báo té ngã ────────────────────────────────────────
   if (type == 0xFA && len == (int)sizeof(FallAlertPacket)) {
     FallAlertPacket packet;
     memcpy(&packet, incomingData, sizeof(packet));
-    Serial.printf("[ESP-NOW] *** CANH BAO TE NGA! *** Luy ke: %u | Confidence: %.2f\n",
-                  packet.fallCount, packet.confidence);
+    Serial.printf(
+        "[ESP-NOW] *** CANH BAO TE NGA! *** Luy ke: %u | Confidence: %.2f\n",
+        packet.fallCount, packet.confidence);
     if (xSemaphoreTake(alertMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-      g_alertLevel   = ALERT_FALL;
+      g_alertLevel = ALERT_FALL;
       g_lastFallTime = millis();
       xSemaphoreGive(alertMutex);
     }
@@ -232,11 +244,11 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *incomingData, int len) {
     ImuTelemetryPacket pkt;
     memcpy(&pkt, incomingData, sizeof(pkt));
     const char *top = (pkt.fall > pkt.idle && pkt.fall > pkt.walk) ? "FALL"
-                    : (pkt.walk > pkt.idle)                         ? "WALK" : "IDLE";
+                      : (pkt.walk > pkt.idle)                      ? "WALK"
+                                                                   : "IDLE";
     Serial.printf("[WEARABLE] aX:%6.3f aY:%6.3f aZ:%6.3f | "
                   "fall:%.2f idle:%.2f walk:%.2f -> %s\n",
-                  pkt.aX, pkt.aY, pkt.aZ,
-                  pkt.fall, pkt.idle, pkt.walk, top);
+                  pkt.aX, pkt.aY, pkt.aZ, pkt.fall, pkt.idle, pkt.walk, top);
   }
 }
 
@@ -288,14 +300,14 @@ static SensorData readAllSensors() {
     ens160.measure(true);
     d.tvoc = ens160.getTVOC();
     d.eco2 = ens160.geteCO2();
-    d.aqi  = ens160.getAQI();
+    d.aqi = ens160.getAQI();
     d.ens160Connected = true;
   }
 
   // AHT21
   sensors_event_t hum, tmp;
   if (aht21.getEvent(&hum, &tmp)) {
-    d.ahtTemp     = tmp.temperature;
+    d.ahtTemp = tmp.temperature;
     d.ahtHumidity = hum.relative_humidity;
     d.aht21Connected = validateTemp(d.ahtTemp);
 
@@ -415,12 +427,15 @@ void TaskAlertManager(void * /*pvParam*/) {
 
     // Ghi AlertLevel mới (mutex bảo vệ)
     if (xSemaphoreTake(alertMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-      // 1. Cảnh báo nguy hiểm từ cảm biến (DANGER/CRITICAL) luôn được quyền đè lên ALERT_FALL để bảo vệ tối thượng
+      // 1. Cảnh báo nguy hiểm từ cảm biến (DANGER/CRITICAL) luôn được quyền đè
+      // lên ALERT_FALL để bảo vệ tối thượng
       if (newLevel == ALERT_DANGER || newLevel == ALERT_CRITICAL) {
         g_alertLevel = newLevel;
       } else {
-        // 2. Nếu không có DANGER/CRITICAL, chỉ cập nhật trạng thái nhẹ hơn nếu không ở ALERT_FALL hoặc cảnh báo ngã đã hết hạn (12 giây)
-        if (g_alertLevel != ALERT_FALL || (millis() - g_lastFallTime >= 12000)) {
+        // 2. Nếu không có DANGER/CRITICAL, chỉ cập nhật trạng thái nhẹ hơn nếu
+        // không ở ALERT_FALL hoặc cảnh báo ngã đã hết hạn (12 giây)
+        if (g_alertLevel != ALERT_FALL ||
+            (millis() - g_lastFallTime >= 12000)) {
           g_alertLevel = newLevel;
         }
       }
@@ -449,11 +464,13 @@ void TaskActuator(void * /*pvParam*/) {
   // Khởi tạo Servo bằng Arduino Native LEDC Wrapper
   vTaskDelay(pdMS_TO_TICKS(500)); // chờ nguồn ổn định
 #if DEBUG_SERIAL
-  Serial.println("[ACTUATOR] Đang khởi tạo Servo (LEDC)..."); Serial.flush();
+  Serial.println("[ACTUATOR] Đang khởi tạo Servo (LEDC)...");
+  Serial.flush();
 #endif
   g_servoAttached = SERVO_LEDC_INIT();
 #if DEBUG_SERIAL
-  Serial.printf("[ACTUATOR] Servo LEDC init: %s\n", g_servoAttached ? "OK" : "FAIL");
+  Serial.printf("[ACTUATOR] Servo LEDC init: %s\n",
+                g_servoAttached ? "OK" : "FAIL");
   Serial.flush();
 #endif
   if (g_servoAttached) {
@@ -539,7 +556,8 @@ void TaskBuzzerLED(void * /*pvParam*/) {
       break;
 
     case ALERT_FALL:
-      // Còi kêu liên tục, LED chớp tắt liên tục cực nhanh (100ms ON / 100ms OFF)
+      // Còi kêu liên tục, LED chớp tắt liên tục cực nhanh (100ms ON / 100ms
+      // OFF)
       digitalWrite(BUZZER_PIN, HIGH);
       g_buzzerState = true;
       if (now - g_lastBuzzerToggle >= 100) {
@@ -595,7 +613,7 @@ void TaskBuzzerLED(void * /*pvParam*/) {
 void setup() {
 #if DEBUG_SERIAL
   Serial.begin(115200);
-  
+
   // Đợi cổng Serial ảo (USB CDC) kết nối (tối đa 4s) để tránh trôi mất log boot
   uint32_t startMs = millis();
   while (!Serial && (millis() - startMs < 4000)) {
@@ -605,12 +623,13 @@ void setup() {
   Serial.println(
       "\n[MAIN] ═══ HỆ THỐNG PHÁT HIỆN KHÍ ĐỘC & NHIỆT ĐỘ (FreeRTOS) ═══");
   Serial.println("[MAIN] Board: ESP32-S3 N16R8 | 16MB Flash | 8MB OPI PSRAM");
-  Serial.flush();  // đảm bảo in ra trước khi có thể crash
+  Serial.flush(); // đảm bảo in ra trước khi có thể crash
 #endif
 
   // GPIO
 #if DEBUG_SERIAL
-  Serial.println("[INIT] GPIO pins..."); Serial.flush();
+  Serial.println("[INIT] GPIO pins...");
+  Serial.flush();
 #endif
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
@@ -621,7 +640,8 @@ void setup() {
 
   // I2C — init TRƯỚC servo để debug sensor trước
 #if DEBUG_SERIAL
-  Serial.println("[INIT] Wire.begin..."); Serial.flush();
+  Serial.println("[INIT] Wire.begin...");
+  Serial.flush();
 #endif
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.setClock(400000);
@@ -662,27 +682,31 @@ void setup() {
 #endif
 
 #if ENABLE_SERVO
-  // Servo được chuyển sang khởi tạo trong TaskActuator để tránh treo lúc khởi động
+  // Servo được chuyển sang khởi tạo trong TaskActuator để tránh treo lúc khởi
+  // động
 #if DEBUG_SERIAL
-  Serial.println("[INIT] Servo sẽ được khởi tạo trong TaskActuator..."); Serial.flush();
+  Serial.println("[INIT] Servo sẽ được khởi tạo trong TaskActuator...");
+  Serial.flush();
 #endif
 #else
 #if DEBUG_SERIAL
-  Serial.println("[INIT] Servo DISABLED (ENABLE_SERVO=0)"); Serial.flush();
+  Serial.println("[INIT] Servo DISABLED (ENABLE_SERVO=0)");
+  Serial.flush();
 #endif
 #endif
 
   // ── ESP-NOW & Wi-Fi Setup ─────────────────────────────────────
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  
+
   // Ép phần cứng chạy Kênh 1 đồng bộ với Thiết bị đeo
   esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
 
   uint8_t mac[6];
   esp_wifi_get_mac(WIFI_IF_STA, mac);
-  Serial.printf("[WIFI] Địa chỉ MAC STA của Trạm chính: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  Serial.printf(
+      "[WIFI] Địa chỉ MAC STA của Trạm chính: %02X:%02X:%02X:%02X:%02X:%02X\n",
+      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
   if (esp_now_init() == ESP_OK) {
     Serial.println("[ESP-NOW] Khởi tạo thành công!");
