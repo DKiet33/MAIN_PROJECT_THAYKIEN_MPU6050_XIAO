@@ -101,7 +101,7 @@ bool initEspNow() {
   // Đăng ký Peer (Trạm chính)
   esp_now_peer_info_t peerInfo = {};
   memcpy(peerInfo.peer_addr, MAIN_BOARD_MAC, 6);
-  peerInfo.channel = 1;
+  peerInfo.channel = 0; // Kênh 0: sử dụng kênh Wi-Fi hiện tại của interface (kênh của AP kết nối)
   peerInfo.encrypt = false;
   
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {

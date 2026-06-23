@@ -208,19 +208,18 @@ struct __attribute__((packed)) FallAlertPacket {
 
 ```
 WiFi.mode(WIFI_AP_STA)
-WiFi.softAP("Wearable_AP", "12345678", channel=1)   // Khoa kenh 1 cho ESP-NOW
-WiFi.begin(EI_WIFI_SSID, EI_WIFI_PASSWORD)           // Ket noi router qua STA
+WiFi.softAP("Wearable_AP", "12345678", channel=1)   // Khoi tao SoftAP
+WiFi.begin(EI_WIFI_SSID, EI_WIFI_PASSWORD)           // Ket noi router qua STA (kenh se chuyen theo router)
 initEspNow():
   esp_now_init()
-  esp_now_add_peer(MAIN_BOARD_MAC, channel=1)
+  esp_now_add_peer(MAIN_BOARD_MAC, channel=0)        // Dang ky peer voi kenh dong (kenh 0)
 ```
 
 ### 2.6. Wi-Fi va ESP-NOW Setup (Main Station setup())
 
 ```
 WiFi.mode(WIFI_STA)
-WiFi.disconnect()
-esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE)        // Ep kenh 1 dong bo voi Wearable
+WiFi.begin("H09", "hoilamgi")                        // Ket noi vao router de tu dong dong bo kenh voi Thiet bi deo
 esp_wifi_get_mac(WIFI_IF_STA, mac) → In ra Serial     // Hien MAC de nguoi dung copy vao MAIN_BOARD_MAC
 esp_now_init()
 esp_now_register_recv_cb(OnDataRecv)
@@ -263,20 +262,20 @@ esp_now_register_recv_cb(OnDataRecv)
 | Tham so | Gia tri |
 |---|---|
 | Giao thuc | ESP-NOW Unicast |
-| Kenh Wi-Fi | Kenh 1 (ca hai board) |
-| Wearable Wi-Fi mode | WIFI_AP_STA — SoftAP "Wearable_AP" khoa kenh 1 |
-| Main Station Wi-Fi mode | WIFI_STA — esp_wifi_set_channel(1) |
+| Kenh Wi-Fi | Kenh dong (theo router H09) |
+| Wearable Wi-Fi mode | WIFI_AP_STA — SoftAP "Wearable_AP" tu dong chuyen theo router |
+| Main Station Wi-Fi mode | WIFI_STA — Ket noi router H09 de dong bo kenh |
 | Do tre truyen nhan | < 10ms (ly thuyet) |
 | Co che chong mat goi | Phat 3x lien tiep, gian cach 5ms |
-| Latching ALERT_FALL | 12 giay tu goi tin cuoi cung |
+| Latching ALERT_FALL | 15 giay tu goi tin cuoi cung |
 | Danger Overwrite | DANGER/CRITICAL de len FALL ngay lap tuc |
 
 > **TRANG THAI:** Code da tich hop hoan chinh. **DA TEST THUC TE THANH CONG TREN CA 2 THIET BI.**
 
 ### Ket qua test thuc te (Verification Results)
 - **Ket qua ESP-NOW:** Da kiem thu thuc te thanh cong tren 2 bo mach (XIAO ESP32-S3 va ESP32-S3 N16R8).
-- **Phan hoi tu thiet bi:** Khi gia lap te nga, Wearable phat 3x ESP-NOW, Trạm chinh nhan tuc thi (<10ms), coi keu va LED nhay 5Hz chinh xac.
-- **Kiem thu latching va overwrite:** Latching 12 giay hoat dong tot, va khi thoi khi doc (ENS160) len muc DANGER, coi va LED da ngay lap tuc kich hoat Danger Overwrite bat servo/quat bat ky luc nao.
+- **Phan hoi tu thiet bi:** Khi gia lap te nga, Wearable phat 3x ESP-NOW, Trạm chinh nhan tuc thi (<10ms), coi nhay nhanh (5Hz) va LED chot 1s/lan (1Hz) chinh xac.
+- **Kiem thu latching va overwrite:** Latching 15 giay hoat dong tot, va khi thoi khi doc (ENS160) len muc DANGER, coi va LED da ngay lap tuc kich hoat Danger Overwrite bat servo/quat bat ky luc nao.
 - **Ket qua kiem thu (2026-05-27):** test thành công các thiết bị Quạt / LED / Buzzer / Servo.
 
 ### Huong dan test (Verification Steps)

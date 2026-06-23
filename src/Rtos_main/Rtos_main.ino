@@ -82,8 +82,8 @@
 #define AQI_DANGER 4
 
 // ══════ Temperature Thresholds ══════
-#define TEMP_WARN_C 45.0f
-#define TEMP_DANGER_C 60.0f
+#define TEMP_WARN_C 30.0f
+#define TEMP_DANGER_C 35.0f
 #define TEMP_ERROR_MIN_C -40.0f
 #define TEMP_ERROR_MAX_C 125.0f
 #define TEMP_DIFF_ERROR_C 15.0f
@@ -151,7 +151,7 @@ struct SensorData {
 // ║                    GLOBAL OBJECTS                            ║
 // ╚══════════════════════════════════════════════════════════════╝
 
-ScioSense_ENS160 ens160(ENS160_I2CADDR_0); // ADD=GND → 0x52
+ScioSense_ENS160* ens160 = nullptr;
 Adafruit_AHTX0 aht21;
 Generic_LM75 lm75(LM75_I2C_ADDR);
 // Servo: dùng Arduino Native LEDC API (Hỗ trợ đa phiên bản Core)
@@ -296,11 +296,11 @@ static SensorData readAllSensors() {
   d.tempAvg = NAN;
 
   // ENS160 — measure(true) bắt buộc để trigger đọc data mới
-  if (ens160.available()) {
-    ens160.measure(true);
-    d.tvoc = ens160.getTVOC();
-    d.eco2 = ens160.geteCO2();
-    d.aqi = ens160.getAQI();
+  if (ens160 != nullptr && ens160->available()) {
+    ens160->measure(true);
+    d.tvoc = ens160->getTVOC();
+    d.eco2 = ens160->geteCO2();
+    d.aqi = ens160->getAQI();
     d.ens160Connected = true;
   }
 
@@ -310,10 +310,6 @@ static SensorData readAllSensors() {
     d.ahtTemp = tmp.temperature;
     d.ahtHumidity = hum.relative_humidity;
     d.aht21Connected = validateTemp(d.ahtTemp);
-
-    // Bù nhiệt độ & độ ẩm vào ENS160 để tăng độ chính xác đo TVOC/eCO2
-    if (d.ens160Connected)
-      ens160.set_envdata(d.ahtTemp, d.ahtHumidity);
   }
 
   // LM75
@@ -322,6 +318,15 @@ static SensorData readAllSensors() {
     if (validateTemp(t)) {
       d.lm75Temp = t;
       d.lm75Connected = true;
+    }
+  }
+
+  // Thực hiện bù trừ môi trường cho ENS160 bằng nguồn tốt nhất khả dụng
+  if (d.ens160Connected && ens160 != nullptr) {
+    if (d.aht21Connected) {
+      ens160->set_envdata(d.ahtTemp, d.ahtHumidity);
+    } else if (d.lm75Connected) {
+      ens160->set_envdata(d.lm75Temp, 50.0f); // Sử dụng LM75 Temp và giả định độ ẩm 50.0%
     }
   }
 
@@ -357,8 +362,8 @@ static SensorData readAllSensors() {
     }
   };
   flag(!d.ens160Connected);
-  flag(!d.aht21Connected);
-  flag(!d.lm75Connected);
+  // Chỉ coi là lỗi hệ thống nếu CẢ HAI cảm biến nhiệt độ đều hỏng
+  flag(!d.aht21Connected && !d.lm75Connected);
 
   return d;
 }
@@ -433,9 +438,9 @@ void TaskAlertManager(void * /*pvParam*/) {
         g_alertLevel = newLevel;
       } else {
         // 2. Nếu không có DANGER/CRITICAL, chỉ cập nhật trạng thái nhẹ hơn nếu
-        // không ở ALERT_FALL hoặc cảnh báo ngã đã hết hạn (12 giây)
+        // không ở ALERT_FALL hoặc cảnh báo ngã đã hết hạn (15 giây)
         if (g_alertLevel != ALERT_FALL ||
-            (millis() - g_lastFallTime >= 12000)) {
+            (millis() - g_lastFallTime >= 15000)) {
           g_alertLevel = newLevel;
         }
       }
@@ -535,7 +540,6 @@ void TaskActuator(void * /*pvParam*/) {
 // Core1 | Priority 5 (ưu tiên cao nhất để phản hồi phần cứng kịp thời)
 // Đọc g_alertLevel và điều khiển pattern Buzzer + LED.
 void TaskBuzzerLED(void * /*pvParam*/) {
-  const TickType_t xInterval = pdMS_TO_TICKS(50); // kiểm tra mỗi 50ms
   TickType_t xLastWake = xTaskGetTickCount();
 
   for (;;) {
@@ -546,6 +550,7 @@ void TaskBuzzerLED(void * /*pvParam*/) {
     }
 
     unsigned long now = millis();
+    const TickType_t xInterval = pdMS_TO_TICKS(50); // kiểm tra mỗi 50ms
 
     switch (lvl) {
     case ALERT_NONE:
@@ -556,15 +561,27 @@ void TaskBuzzerLED(void * /*pvParam*/) {
       break;
 
     case ALERT_FALL:
-      // Còi kêu liên tục, LED chớp tắt liên tục cực nhanh (100ms ON / 100ms
-      // OFF)
-      digitalWrite(BUZZER_PIN, HIGH);
-      g_buzzerState = true;
-      if (now - g_lastBuzzerToggle >= 100) {
+      if (now - g_lastFallTime < 15000) {
+        // 1. LED chớp 1s 1 lần (đảo trạng thái mỗi 500ms)
         static bool fallLedState = false;
-        fallLedState = !fallLedState;
-        digitalWrite(LED_PIN, fallLedState ? HIGH : LOW);
-        g_lastBuzzerToggle = now;
+        static unsigned long lastLedToggle = 0;
+        if (now - lastLedToggle >= 500) {
+          fallLedState = !fallLedState;
+          digitalWrite(LED_PIN, fallLedState ? HIGH : LOW);
+          lastLedToggle = now;
+        }
+
+        // 2. Còi nháy nhanh (đảo trạng thái mỗi 100ms)
+        static unsigned long lastBuzzToggle = 0;
+        if (now - lastBuzzToggle >= 100) {
+          g_buzzerState = !g_buzzerState;
+          digitalWrite(BUZZER_PIN, g_buzzerState ? HIGH : LOW);
+          lastBuzzToggle = now;
+        }
+      } else {
+        digitalWrite(BUZZER_PIN, LOW);
+        digitalWrite(LED_PIN, LOW);
+        g_buzzerState = false;
       }
       break;
 
@@ -660,10 +677,16 @@ void setup() {
 #if DEBUG_SERIAL
   Serial.println("[INIT] ENS160.begin...");
 #endif
-  if (i2cPresent(ENS160_I2CADDR_0)) { // ADD=GND → 0x52
-    ens160.begin();
-    if (ens160.available())
-      ens160.setMode(ENS160_OPMODE_STD);
+  if (i2cPresent(ENS160_I2CADDR_0)) { // ADD=GND -> 0x52
+    ens160 = new ScioSense_ENS160(ENS160_I2CADDR_0);
+  } else if (i2cPresent(ENS160_I2CADDR_1)) { // ADD=VDD -> 0x53
+    ens160 = new ScioSense_ENS160(ENS160_I2CADDR_1);
+  }
+
+  if (ens160 != nullptr) {
+    ens160->begin();
+    if (ens160->available())
+      ens160->setMode(ENS160_OPMODE_STD);
   }
 
 #if DEBUG_SERIAL
@@ -672,7 +695,7 @@ void setup() {
   aht21.begin();
 
 #if DEBUG_SERIAL
-  Serial.printf("[SENSOR] ENS160 %s\n", ens160.available() ? "OK" : "FAIL");
+  Serial.printf("[SENSOR] ENS160 %s\n", (ens160 != nullptr && ens160->available()) ? "OK" : "FAIL");
   Serial.printf("[SENSOR] AHT21  %s\n", aht21.begin() ? "OK" : "FAIL");
   Serial.printf("[SENSOR] LM75   %s\n",
                 i2cPresent(LM75_I2C_ADDR) ? "OK" : "MISSING");
@@ -697,10 +720,7 @@ void setup() {
 
   // ── ESP-NOW & Wi-Fi Setup ─────────────────────────────────────
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-
-  // Ép phần cứng chạy Kênh 1 đồng bộ với Thiết bị đeo
-  esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+  WiFi.begin("H09", "hoilamgi"); // Kết nối vào router để tự động đồng bộ kênh truyền với Thiết bị đeo
 
   uint8_t mac[6];
   esp_wifi_get_mac(WIFI_IF_STA, mac);

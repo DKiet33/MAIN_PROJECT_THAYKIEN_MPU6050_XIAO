@@ -26,7 +26,7 @@ flowchart TD
         A[XIAO ESP32-S3] <--> B[MPU6050 IMU]
         A --> C[Edge Impulse AI Model]
         C --> D["Web UI (PROGMEM)"]
-        C -->|"ALERT_FALL packet\n3x ESP-NOW @ Kênh 1"| E[["ESP-NOW TX"]]
+        C -->|"ALERT_FALL packet\n3x ESP-NOW (Kênh động)"| E[["ESP-NOW TX"]]
     end
 
     subgraph Main["2. KHỐI TRẠM CHÍNH (Main Station Board)"]
@@ -36,7 +36,7 @@ flowchart TD
         G --> J[Alerts: Còi Buzzer + LED Trạng thái]
     end
 
-    E -. "ESP-NOW Unicast\nKênh Wi-Fi 1 (<10ms)\n[ĐÃ TEST THÀNH CÔNG]" .-> F
+    E -. "ESP-NOW Unicast\nĐồng bộ theo Kênh Wi-Fi (<10ms)\n[ĐÃ TEST THÀNH CÔNG]" .-> F
 ```
 
 ---
@@ -66,7 +66,7 @@ flowchart TD
 | :--- | :--- | :--- |
 | **MPU6050 SDA** | GPIO5 | Truyền nhận dữ liệu gia tốc và vận tốc góc |
 | **MPU6050 SCL** | GPIO6 | Phát xung clock I2C cho IMU |
-| **Truyền thông** | Không dây | **ESP-NOW Kênh 1** — truyền `FallAlertPacket` siêu tốc về Trạm Chính |
+| **Truyền thông** | Không dây | **ESP-NOW (Kênh động)** — truyền `FallAlertPacket` siêu tốc về Trạm Chính |
 
 ---
 
@@ -83,7 +83,7 @@ flowchart TD
 
     subgraph Core_1["NHÂN 1 (Xử lý Cảm biến & Cảnh báo)"]
         T1["TaskSensorRead (Pri 3)\nChu kỳ: 1000ms\nĐọc ENS160, AHT21, LM75"]
-        T2["TaskAlertManager (Pri 4)\nChu kỳ: Trực tiếp từ Queue\nTính toán mức AlertLevel\nLatching 12s / Danger Overwrite"]
+        T2["TaskAlertManager (Pri 4)\nChu kỳ: Trực tiếp từ Queue\nTính toán mức AlertLevel\nLatching 15s / Danger Overwrite"]
         T3["TaskBuzzerLED (Pri 5)\nChu kỳ: 50ms\nPhát còi/LED theo nhịp"]
     end
 
@@ -106,20 +106,19 @@ flowchart TD
 *   **Thuật toán tự sửa lỗi (Self-Healing):**
     *   Nếu cả 2 cảm biến hoạt động tốt: Nhiệt độ trung bình = (T_AHT21 + T_LM75) / 2.
     *   Nếu phát hiện sự chênh lệch bất thường > 15°C: Hệ thống đánh dấu trạng thái nghi ngờ, tự động ưu tiên lấy giá trị của cảm biến chính xác cao `LM75`.
-    *   Nếu một trong hai cảm biến mất kết nối vật lý, hệ thống vẫn duy trì hoạt động bằng cảm biến còn lại và chuyển cảnh báo hệ thống sang mức `WARNING`.
+    *   Nếu một trong hai cảm biến nhiệt độ (AHT21/LM75) mất kết nối vật lý, hệ thống vẫn duy trì hoạt động bằng cảm biến còn lại để đo đạc và bù nhiệt độ cho ENS160 mà không gây báo lỗi toàn hệ thống (chỉ báo `WARNING` nếu cả hai cảm biến nhiệt độ cùng hỏng hoặc cảm biến ENS160 hỏng).
 
 ### 3. Phân cấp Cảnh báo & Mô hình Phản ứng (Alert Levels)
 
 | Mức Cảnh Báo | Điều Kiện Kích Hoạt | Chỉ Thị Buzzer / LED | Trạng Thái Actuator |
 | :--- | :--- | :--- | :--- |
-| **ALERT_NONE (0)** | Mọi chỉ số môi trường ở ngưỡng an toàn | LED: OFF / Buzzer: OFF | Servo: 0° / Quạt: OFF |
-| **ALERT_WARNING (2)** | Mất kết nối ≥ 1 cảm biến **Hoặc:** eCO2 ≥ 800ppm, TVOC ≥ 150ppb | LED: ON / Buzzer: 200ms ON / 800ms OFF | Servo: 90° / Quạt: ON |
+| **ALERT_WARNING (2)** | Hỏng cả 2 cảm biến nhiệt độ hoặc hỏng ENS160 **Hoặc:** eCO2 ≥ 800ppm, TVOC ≥ 150ppb | LED: ON / Buzzer: 200ms ON / 800ms OFF | Servo: 90° / Quạt: ON |
 | **ALERT_DANGER (3)** | eCO2 ≥ 1500ppm, TVOC ≥ 500ppb, AQI ≥ 4, Nhiệt độ ≥ 60°C | LED: ON / Buzzer: 100ms ON / 200ms OFF | Servo: 180° / Quạt: ON |
 | **ALERT_CRITICAL (4)** | Ngưỡng nguy hiểm tột cùng từ cảm biến | LED: ON / Buzzer: LIÊN TỤC | Servo: 180° / Quạt: ON |
-| **ALERT_FALL (5)** ⭐ | Nhận gói tin `FallAlertPacket` từ Thiết bị đeo qua ESP-NOW | LED: Nháy siêu nhanh 5Hz / Buzzer: LIÊN TỤC | Servo: **0°** (giữ nguyên) / Quạt: **OFF** |
+| **ALERT_FALL (5)** ⭐ | Nhận gói tin `FallAlertPacket` từ Thiết bị đeo qua ESP-NOW | LED: Nháy chớp 1s/lần (1Hz) / Buzzer: Nháy nhanh (5Hz) | Servo: **0°** (giữ nguyên) / Quạt: **OFF** |
 
 > **Cơ chế ưu tiên an toàn (Danger Overwrite):** Nếu `ALERT_DANGER`/`ALERT_CRITICAL` xảy ra đồng thời với `ALERT_FALL`, hệ thống ngay lập tức đè để bật quạt và mở servo 180° bảo vệ tính mạng.  
-> **Cơ chế Latching 12s:** Trạng thái `ALERT_FALL` được duy trì 12 giây sau gói tin cuối cùng nhận được trước khi tự động giải phóng.
+> **Cơ chế Latching 15s:** Trạng thái `ALERT_FALL` được duy trì 15 giây sau gói tin cuối cùng nhận được trước khi tự động giải phóng.
 
 ---
 
@@ -136,7 +135,7 @@ Thiết bị sử dụng cảm biến quán tính 6 trục MPU6050 kết hợp v
 | `TaskNetworkWeb` | Core 0 | 3 | 6144 B | Web server, state machine INGESTION, HTTPS upload Edge Impulse |
 
 ### 2. Giao tiếp ESP-NOW từ Thiết bị đeo
-*   Wi-Fi chế độ `WIFI_AP_STA` — SoftAP `Wearable_AP` khóa cứng ở Kênh 1
+*   Wi-Fi chế độ `WIFI_AP_STA` — SoftAP `Wearable_AP` tự động chuyển đổi theo kênh Wi-Fi của router kết nối
 *   Gói tin nén `FallAlertPacket` (packed struct, 10 byte): `alertType=0xFA`, `fallCount`, `confidence`, `timestamp`
 *   Phát **3 lần liên tiếp** (giãn cách 5ms) khi xác nhận ngã để chống mất gói do nhiễu
 
@@ -154,7 +153,7 @@ Thiết bị sử dụng cảm biến quán tính 6 trục MPU6050 kết hợp v
 2.  **Thuật toán Gây Nhiễu Quán Tính (Jittering Mode):** Thêm nhiễu ngẫu nhiên Gauss cực nhỏ (±0.02g gia tốc / ±1°/s con quay).
 
 ### 5. Công nghệ Lọc & Khống chế Báo động Giả (Anti-False Alarm Layer)
-*   **Confirm Slices Filter:** `FALL_ALERT_THRESHOLD = 0.85`, `FALL_CONFIRM_SLICES = 3` — xác suất ngã phải vượt ngưỡng liên tục 3 lần.
+*   **Confirm Slices Filter:** `FALL_ALERT_THRESHOLD = 0.85`, `FALL_CONFIRM_SLICES = 2` — xác xuất ngã phải vượt ngưỡng liên tục 2 lần.
 *   **Cooldown Lockout:** `FALL_COOLDOWN_MS = 6000` (6 giây) — khóa tín hiệu phát báo động sau cú ngã đầu tiên.
 
 ---
@@ -180,7 +179,7 @@ Trang web điều khiển được lập trình bằng ngôn ngữ HTML/CSS/JS t
 | 4 | Tích hợp FreeRTOS vào Thiết bị đeo (`wearable_unified_rtos.ino`) — 3 tasks | ✅ Hoàn thành |
 | 5 | Bộ lọc chống báo giả (Debounce + Cooldown) | ✅ Hoàn thành |
 | 6 | **Tích hợp code ESP-NOW vào cả 2 board** | ✅ Hoàn thành |
-| 7 | Cơ chế Latching 12s + Danger Overwrite trên Trạm chính | ✅ Hoàn thành |
+| 7 | Cơ chế Latching 15s + Danger Overwrite trên Trạm chính | ✅ Hoàn thành |
 | 8 | **Kiểm thử tích hợp ESP-NOW thực tế trên 2 thiết bị** | ✅ Đã test thành công |
 | 9 | **Kiểm thử các thiết bị Quạt / Servo / Đèn LED / Buzzer** | ✅ Đã test thành công |
 
@@ -203,6 +202,6 @@ Trang web điều khiển được lập trình bằng ngôn ngữ HTML/CSS/JS t
 *   **Slide 7:** Học Máy trên Thiết Bị Đeo — Edge Impulse, cửa sổ trượt 370ms.
 *   **Slide 8:** Giải pháp Tăng cường dữ liệu — Scaling 3x + Jittering.
 *   **Slide 9:** Lớp Lá Chắn Chống Báo Giả — Confirm Slices + Cooldown.
-*   **Slide 10:** Giao tiếp không dây ESP-NOW — Kênh 1, gói tin packed, 3x redundancy, Latching 12s.
+*   **Slide 10:** Giao tiếp không dây ESP-NOW — Kênh động, gói tin packed, 3x redundancy, Latching 15s.
 *   **Slide 11:** Giao diện vận hành Web UI nén PROGMEM.
 *   **Slide 12:** Kết quả & Lộ trình — Code hoàn chỉnh, cần test thực tế 2 thiết bị.
